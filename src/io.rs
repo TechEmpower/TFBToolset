@@ -182,9 +182,9 @@ pub fn get_tfb_dir() -> ToolsetResult<PathBuf> {
         home_dir.push(".tfb");
         tfb_path = home_dir;
         if !tfb_path.exists() {
-            tfb_path = env::current_dir()?;
-        } else if let Ok(current_dir) = env::current_dir() {
-            tfb_path = current_dir;
+            if let Ok(current_dir) = env::current_dir() {
+                tfb_path = current_dir;
+            }
         }
     }
 

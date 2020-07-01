@@ -16,7 +16,7 @@ pub trait Named {
 #[derive(Deserialize, Clone, Debug)]
 pub struct Config {
     pub framework: Framework,
-    pub default: Test,
+    pub main: Test,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -134,7 +134,7 @@ pub fn get_test_implementations_by_config_file(file: &PathBuf) -> ToolsetResult<
             let mut test: Test = toml::from_str(&toml::to_string(table.get(key).unwrap())?)?;
             let mut test_name = String::new();
             test_name.push_str(&config.framework.name.to_lowercase());
-            if key != "default" {
+            if key != "main" {
                 test_name.push('-');
                 test_name.push_str(key);
             }

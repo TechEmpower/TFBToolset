@@ -24,6 +24,7 @@ pub mod listener;
 pub mod network;
 pub mod verification;
 
+#[derive(Debug)]
 pub struct DockerOrchestration {
     pub network_id: String,
     pub host_container_id: String,
