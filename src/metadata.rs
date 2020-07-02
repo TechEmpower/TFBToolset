@@ -39,7 +39,7 @@ pub fn list_all_tests() -> ToolsetResult<Vec<Test>> {
 /// implementation found.
 pub fn list_tests_for_framework(framework_name: &str) -> ToolsetResult<Vec<Test>> {
     let mut tfb_path = io::get_tfb_dir()?;
-    tfb_path.push(format!("frameworks/*/{}/config.toml", framework_name));
+    tfb_path.push(format!("frameworks/*/{}/config.toml", framework_name.to_lowercase()));
 
     get_test_implementations_by_path(&tfb_path)
 }
