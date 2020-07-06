@@ -1,6 +1,4 @@
 use crate::config::{Named, Test};
-use crate::docker::container::{stop_container, stop_containers_because_of_error};
-use crate::docker::docker_config::DockerConfig;
 use crate::docker::verification::Verification;
 use crate::error::ToolsetError::InvalidFrameworkBenchmarksDirError;
 use crate::error::{ToolsetError, ToolsetResult};
@@ -197,22 +195,6 @@ pub fn get_tfb_dir() -> ToolsetResult<PathBuf> {
     Ok(tfb_path)
 }
 
-/// Attaches a ctrlc handler to the runtime which will stop/kill the running
-/// container given by `container_id`.
-pub fn attach_ctrlc_handler(
-    docker_config: &DockerConfig,
-    container_ids: &(String, Option<String>),
-) -> ToolsetResult<()> {
-    match attach_ctrlc_handler_unsafe(container_ids, docker_config) {
-        Err(e) => Err(stop_containers_because_of_error(
-            docker_config,
-            container_ids,
-            e,
-        )),
-        _ => Ok(()),
-    }
-}
-
 /// Creates the result directory and timestamp subdirectory for this run.
 pub fn create_results_dir() -> ToolsetResult<String> {
     let result_dir = format!("results/{}", Utc::now().format("%Y%m%d%H%M%S"));
@@ -285,31 +267,6 @@ pub fn report_verifications(
 //
 // PRIVATES
 //
-
-/// Attaches a ctrlc handler to the runtime which will stop/kill the running
-/// container given by `container_id`.
-fn attach_ctrlc_handler_unsafe(
-    container_ids: &(String, Option<String>),
-    docker_config: &DockerConfig,
-) -> ToolsetResult<()> {
-    let container_ids = container_ids.clone();
-    let docker_config = docker_config.clone();
-    ctrlc::set_handler(move || {
-        let logger = Logger::default();
-        logger.log("Shutting down (may take a moment)").unwrap();
-        // We `unwrap_or` instead of matching because logging occurs in the
-        // `stop_container` function, and we need to continue trying to stop
-        // every `container_id` we started.
-        stop_container(&docker_config, &container_ids.0).unwrap_or(());
-        if let Some(database_container_id) = &container_ids.1 {
-            stop_container(&docker_config, &database_container_id).unwrap_or(());
-        }
-
-        std::process::exit(0);
-    })?;
-
-    Ok(())
-}
 
 /// Helper function to print a vector of `Named` entries to standard out.
 fn print_all<T: Named>(result: Result<Vec<T>, ToolsetError>) -> ToolsetResult<()> {

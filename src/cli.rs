@@ -31,7 +31,7 @@ pub fn run() -> ToolsetResult<()> {
         println!("PARSE_RESULTS");
         Ok(())
     } else if let Some(mode) = matches.value_of(options::args::MODE) {
-        let benchmarker = Benchmarker::new(matches.clone());
+        let mut benchmarker = Benchmarker::new(matches.clone());
         match mode {
             modes::BENCHMARK => benchmarker.benchmark(),
             modes::VERIFY => benchmarker.verify(),

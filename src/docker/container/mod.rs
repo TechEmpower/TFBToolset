@@ -237,20 +237,6 @@ pub fn stop_containers_because_of_error(
     }
 }
 
-/// Helper function to ensure that running containers started by the toolset
-/// are stopped. This is the preferred way to stop running containers normally.
-pub fn stop_containers(
-    config: &DockerConfig,
-    orchestration: &DockerOrchestration,
-) -> ToolsetResult<()> {
-    stop_container(config, &orchestration.host_container_id)?;
-
-    if let Some(container_id) = &orchestration.db_container_id {
-        stop_container(config, container_id)?;
-    }
-    Ok(())
-}
-
 /// Stops the running container given by `container_id`.
 /// This *will not* exit the running application. Callers must do so manually.
 pub fn stop_container(config: &DockerConfig, container_id: &str) -> ToolsetResult<()> {
