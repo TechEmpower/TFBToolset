@@ -1,5 +1,5 @@
 use crate::config::{Named, Project, Test};
-use crate::docker::verification::Verification;
+use crate::docker::Verification;
 use crate::io::Logger;
 use curl::easy::{Handler, WriteError};
 use serde::Deserialize;

@@ -2,14 +2,14 @@ use clap::ArgMatches;
 
 use crate::config::{Named, Project, Test};
 use crate::docker::container::{
-    create_container, get_database_port_bindings, get_port_bindings_for_container, start_container,
-    stop_container, stop_containers_because_of_error,
+    create_container, create_verifier_container, get_database_port_bindings,
+    get_port_bindings_for_container, start_container, start_verification_container, stop_container,
+    stop_containers_because_of_error,
 };
 use crate::docker::docker_config::DockerConfig;
 use crate::docker::image::{build_image, pull_image};
 use crate::docker::listener::simple::Simple;
 use crate::docker::network::{connect_container_to_network, create_network, NetworkMode};
-use crate::docker::verification::verify;
 use crate::docker::DockerOrchestration;
 use crate::error::ToolsetError::NoResponseFromDockerContainerError;
 use crate::error::ToolsetResult;
@@ -45,6 +45,7 @@ pub struct Benchmarker {
     projects: Vec<Project>,
     application_container_id: Arc<Mutex<String>>,
     dependency_container_ids: Arc<Mutex<Vec<String>>>,
+    verifier_container_id: Arc<Mutex<String>>,
 }
 impl Benchmarker {
     pub fn new(matches: ArgMatches) -> Self {
@@ -53,18 +54,21 @@ impl Benchmarker {
             projects: metadata::list_projects_to_run(&matches),
             application_container_id: Arc::new(Mutex::new(String::new())),
             dependency_container_ids: Arc::new(Mutex::new(Vec::new())),
+            verifier_container_id: Arc::new(Mutex::new(String::new())),
         };
 
         let docker_config = benchmarker.docker_config.clone();
         let application_container_id = Arc::clone(&benchmarker.application_container_id);
         let dependency_container_ids = Arc::clone(&benchmarker.dependency_container_ids);
+        let verifier_container_id = Arc::clone(&benchmarker.verifier_container_id);
         ctrlc::set_handler(move || {
             let logger = Logger::default();
             logger.log("Shutting down (may take a moment)").unwrap();
             // We `unwrap_or` instead of matching because logging occurs in the
             // `stop_container` function, and we need to continue trying to stop
             // every `container_id` we started.
-            stop_container(&docker_config, &**application_container_id.lock().unwrap())
+            stop_container(&docker_config, &*verifier_container_id.lock().unwrap()).unwrap_or(());
+            stop_container(&docker_config, &*application_container_id.lock().unwrap())
                 .unwrap_or(());
             let guard = dependency_container_ids.lock().unwrap();
             for container_id in guard.iter() {
@@ -82,7 +86,7 @@ impl Benchmarker {
     /// `Test` to be able to respond to requests and, optionally, communicate
     /// with a database container.
     /// Note: This function blocks the current thread until the test implementation
-    ///  is able to successfully respond to a request.
+    /// is able to successfully respond to a request.
     pub fn start_test_orchestration(
         &mut self,
         project: &Project,
@@ -202,14 +206,27 @@ impl Benchmarker {
                 logger.set_test(test);
                 let orchestration = self.start_test_orchestration(project, test, &logger)?;
                 for test_type in &test.urls {
-                    let verification = verify(
+                    let container_id =
+                        create_verifier_container(&self.docker_config, &orchestration, &test_type)?;
+                    self.set_verifier(&container_id)?;
+
+                    let container_ids = (container_id.clone(), None);
+
+                    connect_container_to_network(
+                        &self.docker_config,
+                        &orchestration.network_id,
+                        &container_ids,
+                    )?;
+
+                    let verification = start_verification_container(
                         &self.docker_config,
                         project,
                         test,
                         &test_type,
-                        &orchestration,
+                        &container_ids,
                         &logger,
                     )?;
+
                     verifications.push(verification);
                 }
                 self.stop_containers()?;
@@ -225,15 +242,30 @@ impl Benchmarker {
     // PRIVATES
     //
 
+    fn set_verifier(&mut self, container_id: &str) -> ToolsetResult<()> {
+        let mut verification_guard = self.verifier_container_id.lock().unwrap();
+        stop_container(&self.docker_config, &verification_guard).unwrap_or(());
+        // Little hack to "empty" the underlying string.
+        while let Some(_0) = verification_guard.pop() {}
+
+        verification_guard.push_str(container_id);
+
+        Ok(())
+    }
+
     /// Convenience method for stopping all running containers and popping them
     /// off the running containers vec.
     fn stop_containers(&mut self) -> ToolsetResult<()> {
-        let mut application_guard = self.application_container_id.lock().unwrap();
         // We `unwrap_or` instead of matching because logging occurs in the
         // `stop_container` function, and we need to continue trying to stop
         // every `container_id` we started.
-        stop_container(&self.docker_config, &application_guard).unwrap_or(());
+        let mut verification_guard = self.verifier_container_id.lock().unwrap();
+        stop_container(&self.docker_config, &verification_guard).unwrap_or(());
         // Little hack to "empty" the underlying string.
+        while let Some(_0) = verification_guard.pop() {}
+
+        let mut application_guard = self.application_container_id.lock().unwrap();
+        stop_container(&self.docker_config, &application_guard).unwrap_or(());
         while let Some(_0) = application_guard.pop() {}
 
         let mut guard = self.dependency_container_ids.lock().unwrap();

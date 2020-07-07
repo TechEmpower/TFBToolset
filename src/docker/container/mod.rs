@@ -7,8 +7,7 @@ use crate::docker::listener::inspect_container::InspectContainer;
 use crate::docker::listener::simple::Simple;
 use crate::docker::listener::verifier::Verifier;
 use crate::docker::network::NetworkMode;
-use crate::docker::verification::Verification;
-use crate::docker::DockerOrchestration;
+use crate::docker::{DockerOrchestration, Verification};
 use crate::error::ToolsetError::{
     DockerContainerCreateError, DockerContainerStartError, DockerVerifierContainerCreateError,
     FailedToCreateDockerContainerError, FailedToCreateDockerVerifierContainerError,

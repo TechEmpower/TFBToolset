@@ -1,5 +1,5 @@
 use crate::config::{Named, Test};
-use crate::docker::verification::Verification;
+use crate::docker::Verification;
 use crate::error::ToolsetError::InvalidFrameworkBenchmarksDirError;
 use crate::error::{ToolsetError, ToolsetResult};
 use crate::metadata;
