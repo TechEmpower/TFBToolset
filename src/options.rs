@@ -42,6 +42,15 @@ pub mod network_modes {
     pub const HOST: &str = "host";
 }
 
+pub mod test_types {
+    pub const JSON: &str = "json";
+    pub const DB: &str = "db";
+    pub const QUERY: &str = "query";
+    pub const CACHED_QUERY: &str = "cached_query";
+    pub const FORTUNE: &str = "fortune";
+    pub const UPDATE: &str = "update";
+}
+
 /// Parses all the arguments from the CLI and returns the configured matches.
 pub fn parse() -> App<'static> {
     App::new("tfb_toolset")
@@ -143,7 +152,7 @@ pub fn parse() -> App<'static> {
                 .long("type")
                 .takes_value(true)
                 .multiple(true)
-                .possible_values(&["json","db","query","cached_query","fortune","update"])
+                .possible_values(&[test_types::JSON, test_types::DB, test_types::QUERY, test_types::CACHED_QUERY, test_types::FORTUNE, test_types::UPDATE])
         )
         .arg(
             Arg::with_name(args::MODE)

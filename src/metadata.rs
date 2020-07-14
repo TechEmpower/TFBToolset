@@ -39,7 +39,10 @@ pub fn list_all_tests() -> ToolsetResult<Vec<Test>> {
 /// implementation found.
 pub fn list_tests_for_framework(framework_name: &str) -> ToolsetResult<Vec<Test>> {
     let mut tfb_path = io::get_tfb_dir()?;
-    tfb_path.push(format!("frameworks/*/{}/config.toml", framework_name.to_lowercase()));
+    tfb_path.push(format!(
+        "frameworks/*/{}/config.toml",
+        framework_name.to_lowercase()
+    ));
 
     get_test_implementations_by_path(&tfb_path)
 }
@@ -74,7 +77,10 @@ pub fn list_tests_by_tag(tag: &str) -> ToolsetResult<Vec<Test>> {
 /// Say that (Java, FooFramework) and (C#, FooFramework)
 /// both have a `default` test implementation, then this would return the
 /// `Project`s for both when queried with "FooFramework".
-pub fn list_projects_by_test_name(test_name: Option<String>) -> ToolsetResult<Vec<Project>> {
+pub fn list_projects_by_test_name(
+    test_name: Option<String>,
+    test_type: Option<&str>,
+) -> ToolsetResult<Vec<Project>> {
     let mut projects = Vec::new();
     let mut tfb_path = io::get_tfb_dir()?;
     tfb_path.push("frameworks/*/*/config.toml");
@@ -83,7 +89,8 @@ pub fn list_projects_by_test_name(test_name: Option<String>) -> ToolsetResult<Ve
         let framework = config::get_framework_by_config_file(&path_buf)?;
         let mut tests = Vec::new();
         let language = config::get_language_by_config_file(&framework, &path_buf)?;
-        for test in config::get_test_implementations_by_config_file(&path_buf)? {
+        for mut test in config::get_test_implementations_by_config_file(&path_buf)? {
+            test.specify_test_type(test_type);
             if let Some(name) = &test_name {
                 if test.get_name() == *name {
                     tests.push(test);
@@ -106,7 +113,7 @@ pub fn list_projects_by_test_name(test_name: Option<String>) -> ToolsetResult<Ve
 
 /// Convenience function for calling `metadata::list_projects_by_test_name(None)`.
 pub fn list_all_projects() -> ToolsetResult<Vec<Project>> {
-    list_projects_by_test_name(None)
+    list_projects_by_test_name(None, None)
 }
 
 /// Helper method to get the tests to run, specified or not.
@@ -117,11 +124,14 @@ pub fn list_projects_to_run(matches: &ArgMatches) -> Vec<Project> {
         Some(list) => {
             let test_names: Vec<&str> = list.collect();
             for test_name in test_names {
-                match list_projects_by_test_name(Some(String::from(test_name))) {
+                match list_projects_by_test_name(
+                    Some(String::from(test_name)),
+                    matches.value_of(options::args::TYPES),
+                ) {
                     Ok(mut projects_found) => projects.append(&mut projects_found),
                     Err(e) => logger
                         .error(format!(
-                            "Error thrown collecting projects for test name: {}; {}",
+                            "Error thrown collecting projects for test name: {}; {:?}",
                             test_name, e
                         ))
                         .unwrap(),
@@ -131,7 +141,7 @@ pub fn list_projects_to_run(matches: &ArgMatches) -> Vec<Project> {
         _ => match list_all_projects() {
             Ok(mut projects_found) => projects.append(&mut projects_found),
             Err(e) => logger
-                .error(format!("Error thrown collecting all projects: {}", e))
+                .error(format!("Error thrown collecting all projects: {:?}", e))
                 .unwrap(),
         },
     }

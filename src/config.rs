@@ -57,6 +57,11 @@ impl Test {
     pub fn get_tag(&self) -> String {
         format!("tfb.test.{}", self.get_name())
     }
+    pub fn specify_test_type(&mut self, test_type: Option<&str>) {
+        if let Some(test_type) = test_type {
+            self.urls.retain(|key, _| key == test_type);
+        }
+    }
 }
 
 /// Project is the structure that represents the unit of data on which the

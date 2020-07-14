@@ -39,6 +39,7 @@ pub fn run() -> ToolsetResult<()> {
             _ => Err(UnknownBenchmarkerModeError(mode.to_string())),
         }
     } else {
-        Ok(app.print_help().unwrap())
+        app.print_help().unwrap();
+        Ok(())
     }
 }
