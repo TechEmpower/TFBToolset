@@ -209,14 +209,14 @@ pub fn report_verifications(
     mut logger: Logger,
 ) -> ToolsetResult<()> {
     logger.set_log_file("benchmark.txt");
-    let mut frameworks = HashMap::new();
+    let mut test_results = HashMap::new();
     for verification in &verifications {
-        if !frameworks.contains_key(&verification.framework_name) {
+        if !test_results.contains_key(&verification.test_name) {
             let array: Vec<Verification> = Vec::new();
-            frameworks.insert(verification.framework_name.clone(), array);
+            test_results.insert(verification.test_name.clone(), array);
         }
-        frameworks
-            .get_mut(&verification.framework_name)
+        test_results
+            .get_mut(&verification.test_name)
             .unwrap()
             .push(verification.clone());
     }
@@ -230,9 +230,9 @@ pub fn report_verifications(
     logger.log("Verification Summary".cyan())?;
     logger.log(&mid_line_buffer.cyan())?;
 
-    for framework in frameworks {
-        logger.log(format!("{} {}", "|".cyan(), framework.0.cyan()))?;
-        for verification in framework.1 {
+    for test_result in test_results {
+        logger.log(format!("{} {}", "|".cyan(), test_result.0.cyan()))?;
+        for verification in test_result.1 {
             if !verification.errors.is_empty() {
                 logger.log(format!(
                     "{:8}{:13}: {:5} - {}",
