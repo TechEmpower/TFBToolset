@@ -4,20 +4,22 @@ use crate::config::{Named, Project, Test};
 use crate::docker::container::{
     create_container, create_verifier_container, get_database_port_bindings,
     get_port_bindings_for_container, start_container, start_verification_container, stop_container,
-    stop_containers_because_of_error,
+    stop_containers_because_of_error, stop_docker_container_future,
 };
 use crate::docker::docker_config::DockerConfig;
 use crate::docker::image::{build_image, pull_image};
 use crate::docker::listener::simple::Simple;
 use crate::docker::network::{connect_container_to_network, create_network, NetworkMode};
-use crate::docker::DockerOrchestration;
+use crate::docker::{DockerContainerIdFuture, DockerOrchestration};
 use crate::error::ToolsetError::NoResponseFromDockerContainerError;
 use crate::error::ToolsetResult;
 use crate::io::{report_verifications, Logger};
 use crate::metadata;
 use colored::Colorize;
 use curl::easy::Easy2;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use std::{thread, time};
 
 pub mod modes {
@@ -43,39 +45,49 @@ pub mod modes {
 pub struct Benchmarker {
     docker_config: DockerConfig,
     projects: Vec<Project>,
-    application_container_id: Arc<Mutex<String>>,
-    dependency_container_ids: Arc<Mutex<Vec<String>>>,
-    verifier_container_id: Arc<Mutex<String>>,
+    application_container_id: Arc<Mutex<DockerContainerIdFuture>>,
+    database_container_id: Arc<Mutex<DockerContainerIdFuture>>,
+    verifier_container_id: Arc<Mutex<DockerContainerIdFuture>>,
+    ctrlc_received: Arc<AtomicBool>,
 }
 impl Benchmarker {
     pub fn new(matches: ArgMatches) -> Self {
         let benchmarker = Self {
             docker_config: DockerConfig::new(&matches),
             projects: metadata::list_projects_to_run(&matches),
-            application_container_id: Arc::new(Mutex::new(String::new())),
-            dependency_container_ids: Arc::new(Mutex::new(Vec::new())),
-            verifier_container_id: Arc::new(Mutex::new(String::new())),
+            application_container_id: Arc::new(Mutex::new(DockerContainerIdFuture::new())),
+            database_container_id: Arc::new(Mutex::new(DockerContainerIdFuture::new())),
+            verifier_container_id: Arc::new(Mutex::new(DockerContainerIdFuture::new())),
+            ctrlc_received: Arc::new(AtomicBool::new(false)),
         };
 
         let docker_config = benchmarker.docker_config.clone();
         let application_container_id = Arc::clone(&benchmarker.application_container_id);
-        let dependency_container_ids = Arc::clone(&benchmarker.dependency_container_ids);
+        let database_container_id = Arc::clone(&benchmarker.database_container_id);
         let verifier_container_id = Arc::clone(&benchmarker.verifier_container_id);
+        let ctrlc_received = Arc::clone(&benchmarker.ctrlc_received);
         ctrlc::set_handler(move || {
             let logger = Logger::default();
             logger.log("Shutting down (may take a moment)").unwrap();
-            // We `unwrap_or` instead of matching because logging occurs in the
-            // `stop_container` function, and we need to continue trying to stop
-            // every `container_id` we started.
-            stop_container(&docker_config, &*verifier_container_id.lock().unwrap()).unwrap_or(());
-            stop_container(&docker_config, &*application_container_id.lock().unwrap())
-                .unwrap_or(());
-            let guard = dependency_container_ids.lock().unwrap();
-            for container_id in guard.iter() {
-                stop_container(&docker_config, container_id).unwrap_or(());
+            if ctrlc_received.load(Ordering::Acquire) {
+                logger
+                    .log("Exiting immediately (there may still be running containers to stop)")
+                    .unwrap();
+                std::process::exit(0);
+            } else {
+                let docker_config = docker_config.clone();
+                let application_container_id = Arc::clone(&application_container_id);
+                let database_container_id = Arc::clone(&database_container_id);
+                let verifier_container_id = Arc::clone(&verifier_container_id);
+                let ctrlc_received = Arc::clone(&ctrlc_received);
+                thread::spawn(move || {
+                    ctrlc_received.store(true, Ordering::Release);
+                    stop_docker_container_future(&docker_config, &verifier_container_id);
+                    stop_docker_container_future(&docker_config, &application_container_id);
+                    stop_docker_container_future(&docker_config, &database_container_id);
+                    std::process::exit(0);
+                });
             }
-
-            std::process::exit(0);
         })
         .unwrap();
 
@@ -122,7 +134,16 @@ impl Benchmarker {
 
         connect_container_to_network(&self.docker_config, &network_id, &container_ids)?;
 
+        if let Ok(mut application_container_id) = self.application_container_id.try_lock() {
+            application_container_id.requires_wait_to_stop = true;
+        }
+
+        self.trip();
         start_container(&self.docker_config, &container_ids, &logger)?;
+
+        if let Ok(mut application_container_id) = self.application_container_id.try_lock() {
+            application_container_id.container_id = Some(container_ids.0.clone());
+        }
 
         let host_ports = get_port_bindings_for_container(&self.docker_config, &container_ids)?;
 
@@ -133,12 +154,6 @@ impl Benchmarker {
                 e,
             ));
         };
-
-        // We have started a container and need to push its id.
-        // Note: If a database container was started, its id should already be
-        // pushed.
-        let mut guard = self.application_container_id.lock().unwrap();
-        guard.push_str(&container_ids.0);
 
         Ok(DockerOrchestration {
             network_id,
@@ -186,7 +201,7 @@ impl Benchmarker {
                     .yellow(),
                 )?;
                 loop {
-                    thread::sleep(time::Duration::from_secs(1));
+                    thread::sleep(Duration::from_secs(1));
                 }
             }
         }
@@ -204,11 +219,12 @@ impl Benchmarker {
             for test in &project.tests {
                 let mut logger = logger.clone();
                 logger.set_test(test);
+                self.trip();
                 let orchestration = self.start_test_orchestration(project, test, &logger)?;
                 for test_type in &test.urls {
+                    self.trip();
                     let container_id =
                         create_verifier_container(&self.docker_config, &orchestration, &test_type)?;
-                    self.set_verifier(&container_id)?;
 
                     let container_ids = (container_id.clone(), None);
 
@@ -218,6 +234,13 @@ impl Benchmarker {
                         &container_ids,
                     )?;
 
+                    // This DockerContainerIdFuture is different than the others
+                    // because it blocks until the verifier exits.
+                    if let Ok(mut verifier) = self.verifier_container_id.try_lock() {
+                        verifier.requires_wait_to_stop = true;
+                        verifier.container_id = Some(container_ids.0.clone());
+                    }
+                    self.trip();
                     let verification = start_verification_container(
                         &self.docker_config,
                         project,
@@ -227,12 +250,22 @@ impl Benchmarker {
                         &logger,
                     )?;
 
+                    // This signals that the verifier exited naturally on
+                    // its own, so we don't need to stop its container.
+                    if let Ok(mut verifier) = self.verifier_container_id.try_lock() {
+                        verifier.requires_wait_to_stop = false;
+                        verifier.container_id = None;
+                    }
+
                     verifications.push(verification);
                 }
+
+                self.trip();
                 self.stop_containers()?;
             }
         }
 
+        self.trip();
         report_verifications(verifications, logger)?;
 
         Ok(())
@@ -242,36 +275,32 @@ impl Benchmarker {
     // PRIVATES
     //
 
-    fn set_verifier(&mut self, container_id: &str) -> ToolsetResult<()> {
-        let mut verification_guard = self.verifier_container_id.lock().unwrap();
-        stop_container(&self.docker_config, &verification_guard).unwrap_or(());
-        // Little hack to "empty" the underlying string.
-        while let Some(_0) = verification_guard.pop() {}
-
-        verification_guard.push_str(container_id);
-
-        Ok(())
+    /// Sentinel helper for tripping when ctrlc has been pressed. Because the
+    /// handler itself is in a separate thread, the main thread can continue
+    /// longer than needed starting and stopping containers while the ctrlc
+    /// thread is trying to take everything down.
+    ///
+    /// If, and only if, ctrlc has occurred this function will block forever.
+    ///
+    /// Note: the expectation is that the ctrlc thread will always exit the
+    /// program.
+    fn trip(&mut self) {
+        if self.ctrlc_received.load(Ordering::Acquire) {
+            loop {
+                // We may be cleaning up containers on the ctrl-c thread,
+                // so sleep forever (the ctrlc handler will exit the program
+                // for us eventually.
+                thread::sleep(Duration::from_secs(1));
+            }
+        }
     }
 
     /// Convenience method for stopping all running containers and popping them
     /// off the running containers vec.
     fn stop_containers(&mut self) -> ToolsetResult<()> {
-        // We `unwrap_or` instead of matching because logging occurs in the
-        // `stop_container` function, and we need to continue trying to stop
-        // every `container_id` we started.
-        let mut verification_guard = self.verifier_container_id.lock().unwrap();
-        stop_container(&self.docker_config, &verification_guard).unwrap_or(());
-        // Little hack to "empty" the underlying string.
-        while let Some(_0) = verification_guard.pop() {}
-
-        let mut application_guard = self.application_container_id.lock().unwrap();
-        stop_container(&self.docker_config, &application_guard).unwrap_or(());
-        while let Some(_0) = application_guard.pop() {}
-
-        let mut guard = self.dependency_container_ids.lock().unwrap();
-        while let Some(container_id) = guard.pop() {
-            stop_container(&self.docker_config, &container_id).unwrap_or(());
-        }
+        stop_docker_container_future(&self.docker_config, &self.verifier_container_id);
+        stop_docker_container_future(&self.docker_config, &self.application_container_id);
+        stop_docker_container_future(&self.docker_config, &self.database_container_id);
 
         Ok(())
     }
@@ -313,11 +342,16 @@ impl Benchmarker {
             let mut logger = Logger::with_prefix(&database);
             logger.quiet = true;
 
+            if let Ok(mut database_container_id) = self.database_container_id.try_lock() {
+                database_container_id.requires_wait_to_stop = true;
+            }
+
+            self.trip();
             start_container(&self.docker_config, &container_ids, &logger)?;
 
-            // We have started a container with a known id; need to push it.
-            let mut guard = self.dependency_container_ids.lock().unwrap();
-            guard.push(container_ids.0.clone());
+            if let Ok(mut database_container_id) = self.database_container_id.try_lock() {
+                database_container_id.container_id = Some(container_ids.0.clone());
+            }
 
             return Ok(Some(container_ids.0));
         }
@@ -370,7 +404,7 @@ impl Benchmarker {
                 }
                 _ => {
                     slept_for += 1;
-                    thread::sleep(time::Duration::from_secs(1));
+                    thread::sleep(Duration::from_secs(1));
                 }
             }
         }

@@ -4,6 +4,7 @@
 
 use crate::docker::listener::verifier::Error;
 use crate::docker::listener::verifier::Warning;
+use std::task::Poll;
 
 pub mod container;
 pub mod docker_config;
@@ -30,4 +31,29 @@ pub struct Verification {
     pub type_name: String,
     pub warnings: Vec<Warning>,
     pub errors: Vec<Error>,
+}
+
+pub struct DockerContainerIdFuture {
+    pub requires_wait_to_stop: bool,
+    pub container_id: Option<String>,
+}
+impl DockerContainerIdFuture {
+    pub fn new() -> Self {
+        DockerContainerIdFuture {
+            requires_wait_to_stop: false,
+            container_id: None,
+        }
+    }
+
+    fn poll(&self) -> Poll<()> {
+        if self.requires_wait_to_stop {
+            if self.container_id.is_some() {
+                Poll::Ready(())
+            } else {
+                Poll::Pending
+            }
+        } else {
+            Poll::Ready(())
+        }
+    }
 }

@@ -7,7 +7,7 @@ use crate::docker::listener::inspect_container::InspectContainer;
 use crate::docker::listener::simple::Simple;
 use crate::docker::listener::verifier::Verifier;
 use crate::docker::network::NetworkMode;
-use crate::docker::{DockerOrchestration, Verification};
+use crate::docker::{DockerContainerIdFuture, DockerOrchestration, Verification};
 use crate::error::ToolsetError::{
     DockerContainerCreateError, DockerContainerStartError, DockerVerifierContainerCreateError,
     FailedToCreateDockerContainerError, FailedToCreateDockerVerifierContainerError,
@@ -16,7 +16,10 @@ use crate::error::ToolsetError::{
 use crate::error::{ToolsetError, ToolsetResult};
 use crate::io::Logger;
 use curl::easy::{Easy2, List};
+use std::sync::{Arc, Mutex};
+use std::task::Poll;
 use std::thread;
+use std::time::Duration;
 
 pub mod create_options;
 
@@ -61,43 +64,49 @@ pub fn create_verifier_container(
     headers.append("Content-Type: application/json")?;
 
     let json = match &config.network_mode {
-        NetworkMode::Bridge => bridge::Builder::new("tfb.verifier")
-            .publish_all_ports(true)
-            .network_id(&orchestration.network_id)
-            .env(&format!("PORT={}", orchestration.host_internal_port))
-            .env(&format!("ENDPOINT={}", test_type.1.clone()))
-            .env(&format!("TEST_TYPE={}", test_type.0.clone()))
-            .env(&format!(
-                "CONCURRENCY_LEVELS={}",
-                &config.concurrency_levels
-            ))
-            .env(&format!(
-                "DATABASE={}",
-                orchestration
-                    .database_name
-                    .as_ref()
-                    .unwrap_or(&String::new())
-            ))
-            .build()
-            .to_json(),
-        NetworkMode::Host => host::Builder::new("tfb.verifier")
-            .with_extra_host(&format!("tfb-database:{}", config.database_host))
-            .env(&format!("PORT={}", orchestration.host_internal_port))
-            .env(&format!("ENDPOINT={}", test_type.1.clone()))
-            .env(&format!("TEST_TYPE={}", test_type.0.clone()))
-            .env(&format!(
-                "CONCURRENCY_LEVELS={}",
-                &config.concurrency_levels
-            ))
-            .env(&format!(
-                "DATABASE={}",
-                orchestration
-                    .database_name
-                    .as_ref()
-                    .unwrap_or(&String::new())
-            ))
-            .build()
-            .to_json(),
+        NetworkMode::Bridge => {
+            let mut builder = bridge::Builder::new("tfb.verifier")
+                .publish_all_ports(true)
+                .network_id(&orchestration.network_id)
+                .env(&format!("PORT={}", orchestration.host_internal_port))
+                .env(&format!("ENDPOINT={}", test_type.1.clone()))
+                .env(&format!("TEST_TYPE={}", test_type.0.clone()))
+                .env(&format!(
+                    "CONCURRENCY_LEVELS={}",
+                    &config.concurrency_levels
+                ));
+            if orchestration.database_name.is_some() {
+                builder = builder.env(&format!(
+                    "DATABASE={}",
+                    orchestration
+                        .database_name
+                        .as_ref()
+                        .unwrap_or(&String::new())
+                ));
+            }
+            builder.build().to_json()
+        }
+        NetworkMode::Host => {
+            let mut builder = host::Builder::new("tfb.verifier")
+                .with_extra_host(&format!("tfb-database:{}", config.database_host))
+                .env(&format!("PORT={}", orchestration.host_internal_port))
+                .env(&format!("ENDPOINT={}", test_type.1.clone()))
+                .env(&format!("TEST_TYPE={}", test_type.0.clone()))
+                .env(&format!(
+                    "CONCURRENCY_LEVELS={}",
+                    &config.concurrency_levels
+                ));
+            if orchestration.database_name.is_some() {
+                builder = builder.env(&format!(
+                    "DATABASE={}",
+                    orchestration
+                        .database_name
+                        .as_ref()
+                        .unwrap_or(&String::new())
+                ));
+            }
+            builder.build().to_json()
+        }
     };
     let len = json.as_bytes().len();
 
@@ -254,6 +263,32 @@ pub fn stop_container(config: &DockerConfig, container_id: &str) -> ToolsetResul
     match easy.response_code()? {
         204 => Ok(()),
         _ => kill_container(config, container_id),
+    }
+}
+
+/// Polls until `container` is ready with either some `container_id` or `None`,
+/// then kills that `container_id`, and sets the internal `container_id` to
+/// `None`.
+///
+/// Note: this function blocks until the given `container` is in a ready state.
+pub fn stop_docker_container_future(
+    docker_config: &DockerConfig,
+    container: &Arc<Mutex<DockerContainerIdFuture>>,
+) {
+    let mut poll = Poll::Pending;
+    while poll == Poll::Pending {
+        if let Ok(container) = container.try_lock() {
+            poll = container.poll();
+            if poll == Poll::Pending {
+                thread::sleep(Duration::from_secs(1));
+            }
+        }
+    }
+    if let Ok(mut container) = container.try_lock() {
+        if let Some(container_id) = &container.container_id {
+            kill_container(&docker_config, container_id).unwrap();
+            container.container_id = None;
+        }
     }
 }
 
