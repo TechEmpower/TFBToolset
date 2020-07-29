@@ -3,8 +3,8 @@ use crate::docker::container::stop_container;
 use crate::docker::docker_config::DockerConfig;
 use crate::docker::listener::build_image::BuildImage;
 use crate::error::ToolsetError::{
-    DockerImageCreateError, DockerImagePullError, FailedToCreateDockerImageError,
-    FailedToPullDockerImageError,
+    DockerImageCreateError, FailedToCreateDockerImageError, _DockerImagePullError,
+    _FailedToPullDockerImageError,
 };
 use crate::error::ToolsetResult;
 use crate::io::Logger;
@@ -32,7 +32,7 @@ impl Write for Tarchive {
 }
 
 /// Pulls an image given by `image_name` into the daemon's registry.
-pub fn pull_image(config: &DockerConfig, image_name: &str, logger: &Logger) -> ToolsetResult<()> {
+pub fn _pull_image(config: &DockerConfig, image_name: &str, logger: &Logger) -> ToolsetResult<()> {
     let query_string = format!("?fromImage={}&tag=latest", image_name);
 
     let mut easy = Easy2::new(BuildImage::new(logger));
@@ -53,12 +53,14 @@ pub fn pull_image(config: &DockerConfig, image_name: &str, logger: &Logger) -> T
             _ => {
                 let error_message = &easy.get_ref().error_message;
                 if error_message.is_some() {
-                    return Err(FailedToPullDockerImageError(error_message.clone().unwrap()));
+                    return Err(_FailedToPullDockerImageError(
+                        error_message.clone().unwrap(),
+                    ));
                 }
-                Err(DockerImagePullError)
+                Err(_DockerImagePullError)
             }
         },
-        Err(e) => Err(FailedToPullDockerImageError(e.to_string())),
+        Err(e) => Err(_FailedToPullDockerImageError(e.to_string())),
     }
 }
 

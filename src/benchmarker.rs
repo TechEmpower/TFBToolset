@@ -7,11 +7,11 @@ use crate::docker::container::{
     stop_containers_because_of_error, stop_docker_container_future,
 };
 use crate::docker::docker_config::DockerConfig;
-use crate::docker::image::{build_image, pull_image};
+use crate::docker::image::build_image;
 use crate::docker::listener::simple::Simple;
 use crate::docker::network::{connect_container_to_network, create_network, NetworkMode};
-use crate::docker::{DockerContainerIdFuture, DockerOrchestration};
-use crate::error::ToolsetError::NoResponseFromDockerContainerError;
+use crate::docker::{DockerContainerIdFuture, DockerOrchestration, Verification};
+use crate::error::ToolsetError::{NoResponseFromDockerContainerError, VerificationFailedException};
 use crate::error::ToolsetResult;
 use crate::io::{report_verifications, Logger};
 use crate::metadata;
@@ -94,12 +94,158 @@ impl Benchmarker {
         benchmarker
     }
 
+    /// Iterates over the specified test implementation(s), starts configured
+    /// required services (like a database), starts the test implementation,
+    /// verifies the configured end-points for each test type, and, if
+    /// successful, will benchmark the running test implementation. When
+    /// benchmarking completes, the results are parsed and stored in the
+    /// results directory for this benchmark.
+    pub fn benchmark(&mut self) -> ToolsetResult<()> {
+        let logger = self.docker_config.logger.clone();
+        let projects = &self.projects.clone();
+        for project in projects {
+            for test in &project.tests {
+                let mut logger = logger.clone();
+                logger.set_test(test);
+                self.trip();
+                let _orchestration = self.start_test_orchestration(project, test, &logger)?;
+                for _test_type in &test.urls {
+                    // todo - benchmark
+                }
+
+                self.trip();
+                self.stop_containers()?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Starts the given test implementation as a running server and waits
+    /// indefinitely. This is useful for locally debugging why your service may
+    /// not be responding correctly and failing verification, for example.
+    pub fn debug(&mut self) -> ToolsetResult<()> {
+        // Because it makes no sense to loop over all the specified tests when
+        // the first test found will cause the main thread to sleep forever, we
+        // just check *that* there is a test to run and start it.
+        let projects = self.projects.clone();
+        if let Some(project) = projects.get(0) {
+            if let Some(test) = project.tests.get(0) {
+                let logger = Logger::with_prefix(&test.get_name());
+                let orchestration = self.start_test_orchestration(&project, &test, &logger)?;
+                logger.log(
+                    &format!(
+                        "Entering debug mode. Server http://localhost:{} has started. CTRL-c to stop.",
+                        orchestration.host_port
+                    )
+                    .yellow(),
+                )?;
+                loop {
+                    thread::sleep(Duration::from_secs(1));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Attempts to run the suite of verifications against the specified
+    /// test implementation(s).
+    pub fn verify(&mut self) -> ToolsetResult<()> {
+        let mut succeeded = true;
+        let mut verifications = Vec::new();
+        let logger = self.docker_config.logger.clone();
+        let projects = &self.projects.clone();
+        for project in projects {
+            for test in &project.tests {
+                let mut logger = logger.clone();
+                logger.set_test(test);
+                self.trip();
+                let orchestration = self.start_test_orchestration(project, test, &logger)?;
+                for test_type in &test.urls {
+                    let verification = self.run_verification(
+                        &project,
+                        &test,
+                        &orchestration,
+                        &test_type,
+                        &logger,
+                    )?;
+                    succeeded &= verification.errors.is_empty();
+                    verifications.push(verification);
+                }
+
+                self.trip();
+                self.stop_containers()?;
+            }
+        }
+
+        self.trip();
+        report_verifications(verifications, logger)?;
+
+        if succeeded {
+            Ok(())
+        } else {
+            Err(VerificationFailedException)
+        }
+    }
+
+    //
+    // PRIVATES
+    //
+
+    /// Runs the verifier against the given test orchestration and returns the
+    /// `Verification` result.
+    fn run_verification(
+        &mut self,
+        project: &Project,
+        test: &Test,
+        orchestration: &DockerOrchestration,
+        test_type: &(&String, &String),
+        logger: &Logger,
+    ) -> ToolsetResult<Verification> {
+        self.trip();
+        let container_id =
+            create_verifier_container(&self.docker_config, &orchestration, &test_type)?;
+
+        let container_ids = (container_id, None);
+
+        connect_container_to_network(
+            &self.docker_config,
+            &orchestration.network_id,
+            &container_ids,
+        )?;
+
+        // This DockerContainerIdFuture is different than the others
+        // because it blocks until the verifier exits.
+        if let Ok(mut verifier) = self.verifier_container_id.try_lock() {
+            verifier.requires_wait_to_stop = true;
+            verifier.container_id = Some(container_ids.0.clone());
+        }
+        self.trip();
+        let verification = start_verification_container(
+            &self.docker_config,
+            project,
+            test,
+            &test_type,
+            &container_ids,
+            &logger,
+        )?;
+        // This signals that the verifier exited naturally on
+        // its own, so we don't need to stop its container.
+        if let Ok(mut verifier) = self.verifier_container_id.try_lock() {
+            verifier.requires_wait_to_stop = false;
+            verifier.container_id = None;
+        }
+
+        Ok(verification)
+    }
+
     /// Starts all the underlying docker orchestration required for the given
     /// `Test` to be able to respond to requests and, optionally, communicate
     /// with a database container.
     /// Note: This function blocks the current thread until the test implementation
     /// is able to successfully respond to a request.
-    pub fn start_test_orchestration(
+    fn start_test_orchestration(
         &mut self,
         project: &Project,
         test: &Test,
@@ -148,6 +294,7 @@ impl Benchmarker {
         let host_ports = get_port_bindings_for_container(&self.docker_config, &container_ids)?;
 
         if let Err(e) = self.wait_until_accepting_requests(&container_ids, &host_ports.0, test) {
+            self.trip();
             return Err(stop_containers_because_of_error(
                 &self.docker_config,
                 &container_ids,
@@ -166,114 +313,6 @@ impl Benchmarker {
             db_internal_port: database_ports.1,
         })
     }
-
-    /// Iterates over the specified test implementation(s), starts configured
-    /// required services (like a database), starts the test implementation,
-    /// verifies the configured end-points for each test type, and, if
-    /// successful, will benchmark the running test implementation. When
-    /// benchmarking completes, the results are parsed and stored in the
-    /// results directory for this benchmark.
-    pub fn benchmark(&mut self) -> ToolsetResult<()> {
-        // todo - listener needs real logs
-        let logger = Logger::default();
-        pull_image(&self.docker_config, "hello-world", &logger)?;
-
-        Ok(())
-    }
-
-    /// Starts the given test implementation as a running server and waits
-    /// indefinitely. This is useful for locally debugging why your service may
-    /// not be responding correctly and failing verification, for example.
-    pub fn debug(&mut self) -> ToolsetResult<()> {
-        // Because it makes no sense to loop over all the specified tests when
-        // the first test found will cause the main thread to sleep forever, we
-        // just check *that* there is a test to run and start it.
-        let projects = self.projects.clone();
-        if let Some(project) = projects.get(0) {
-            if let Some(test) = project.tests.get(0) {
-                let logger = Logger::with_prefix(&test.get_name());
-                let orchestration = self.start_test_orchestration(&project, &test, &logger)?;
-                logger.log(
-                    &format!(
-                        "Entering debug mode. Server http://localhost:{} has started. CTRL-c to stop.",
-                        orchestration.host_port
-                    )
-                    .yellow(),
-                )?;
-                loop {
-                    thread::sleep(Duration::from_secs(1));
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Attempts to run the suite of verifications against the specified
-    /// test implementation(s).
-    pub fn verify(&mut self) -> ToolsetResult<()> {
-        let mut verifications = Vec::new();
-        let logger = self.docker_config.logger.clone();
-        let projects = &self.projects.clone();
-        for project in projects {
-            for test in &project.tests {
-                let mut logger = logger.clone();
-                logger.set_test(test);
-                self.trip();
-                let orchestration = self.start_test_orchestration(project, test, &logger)?;
-                for test_type in &test.urls {
-                    self.trip();
-                    let container_id =
-                        create_verifier_container(&self.docker_config, &orchestration, &test_type)?;
-
-                    let container_ids = (container_id.clone(), None);
-
-                    connect_container_to_network(
-                        &self.docker_config,
-                        &orchestration.network_id,
-                        &container_ids,
-                    )?;
-
-                    // This DockerContainerIdFuture is different than the others
-                    // because it blocks until the verifier exits.
-                    if let Ok(mut verifier) = self.verifier_container_id.try_lock() {
-                        verifier.requires_wait_to_stop = true;
-                        verifier.container_id = Some(container_ids.0.clone());
-                    }
-                    self.trip();
-                    let verification = start_verification_container(
-                        &self.docker_config,
-                        project,
-                        test,
-                        &test_type,
-                        &container_ids,
-                        &logger,
-                    )?;
-
-                    // This signals that the verifier exited naturally on
-                    // its own, so we don't need to stop its container.
-                    if let Ok(mut verifier) = self.verifier_container_id.try_lock() {
-                        verifier.requires_wait_to_stop = false;
-                        verifier.container_id = None;
-                    }
-
-                    verifications.push(verification);
-                }
-
-                self.trip();
-                self.stop_containers()?;
-            }
-        }
-
-        self.trip();
-        report_verifications(verifications, logger)?;
-
-        Ok(())
-    }
-
-    //
-    // PRIVATES
-    //
 
     /// Sentinel helper for tripping when ctrlc has been pressed. Because the
     /// handler itself is in a separate thread, the main thread can continue
@@ -369,9 +408,12 @@ impl Benchmarker {
     ) -> ToolsetResult<()> {
         let mut slept_for = 0;
         loop {
+            self.trip();
             if slept_for > 60 {
+                self.trip();
                 stop_container(&self.docker_config, &container_ids.0)?;
                 if let Some(database_container_id) = &container_ids.1 {
+                    self.trip();
                     stop_container(&self.docker_config, &database_container_id)?;
                 }
 

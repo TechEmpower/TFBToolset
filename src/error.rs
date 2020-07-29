@@ -37,10 +37,10 @@ pub enum ToolsetError {
     DockerImageCreateError,
 
     #[error("Error pulling Docker Image: {0}")]
-    FailedToPullDockerImageError(String),
+    _FailedToPullDockerImageError(String),
 
     #[error("Error pulling Docker Image")]
-    DockerImagePullError,
+    _DockerImagePullError,
 
     #[error("Error creating Docker Container: {0}")]
     FailedToCreateDockerContainerError(String),
@@ -89,4 +89,7 @@ pub enum ToolsetError {
 
     #[error("Unknown benchmarker mode: {0}")]
     UnknownBenchmarkerModeError(String),
+
+    #[error("Verification failed")]
+    VerificationFailedException,
 }
