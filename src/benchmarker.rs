@@ -2,8 +2,9 @@ use clap::ArgMatches;
 
 use crate::config::{Named, Project, Test};
 use crate::docker::container::{
-    create_container, create_verifier_container, get_database_port_bindings,
-    get_port_bindings_for_container, start_container, start_verification_container, stop_container,
+    create_benchmarker_container, create_container, create_verifier_container,
+    get_database_port_bindings, get_port_bindings_for_container, start_benchmarker_container,
+    start_container, start_verification_container, stop_container,
     stop_containers_because_of_error, stop_docker_container_future,
 };
 use crate::docker::docker_config::DockerConfig;
@@ -48,6 +49,7 @@ pub struct Benchmarker {
     application_container_id: Arc<Mutex<DockerContainerIdFuture>>,
     database_container_id: Arc<Mutex<DockerContainerIdFuture>>,
     verifier_container_id: Arc<Mutex<DockerContainerIdFuture>>,
+    benchmarker_container_id: Arc<Mutex<DockerContainerIdFuture>>,
     ctrlc_received: Arc<AtomicBool>,
 }
 impl Benchmarker {
@@ -58,6 +60,7 @@ impl Benchmarker {
             application_container_id: Arc::new(Mutex::new(DockerContainerIdFuture::new())),
             database_container_id: Arc::new(Mutex::new(DockerContainerIdFuture::new())),
             verifier_container_id: Arc::new(Mutex::new(DockerContainerIdFuture::new())),
+            benchmarker_container_id: Arc::new(Mutex::new(DockerContainerIdFuture::new())),
             ctrlc_received: Arc::new(AtomicBool::new(false)),
         };
 
@@ -65,6 +68,7 @@ impl Benchmarker {
         let application_container_id = Arc::clone(&benchmarker.application_container_id);
         let database_container_id = Arc::clone(&benchmarker.database_container_id);
         let verifier_container_id = Arc::clone(&benchmarker.verifier_container_id);
+        let benchmarker_container_id = Arc::clone(&benchmarker.benchmarker_container_id);
         let ctrlc_received = Arc::clone(&benchmarker.ctrlc_received);
         ctrlc::set_handler(move || {
             let logger = Logger::default();
@@ -79,10 +83,12 @@ impl Benchmarker {
                 let application_container_id = Arc::clone(&application_container_id);
                 let database_container_id = Arc::clone(&database_container_id);
                 let verifier_container_id = Arc::clone(&verifier_container_id);
+                let benchmarker_container_id = Arc::clone(&benchmarker_container_id);
                 let ctrlc_received = Arc::clone(&ctrlc_received);
                 thread::spawn(move || {
                     ctrlc_received.store(true, Ordering::Release);
                     stop_docker_container_future(&docker_config, &verifier_container_id);
+                    stop_docker_container_future(&docker_config, &benchmarker_container_id);
                     stop_docker_container_future(&docker_config, &application_container_id);
                     stop_docker_container_future(&docker_config, &database_container_id);
                     std::process::exit(0);
@@ -108,9 +114,15 @@ impl Benchmarker {
                 let mut logger = logger.clone();
                 logger.set_test(test);
                 self.trip();
-                let _orchestration = self.start_test_orchestration(project, test, &logger)?;
-                for _test_type in &test.urls {
-                    // todo - benchmark
+                let orchestration = self.start_test_orchestration(project, test, &logger)?;
+                for test_type in &test.urls {
+                    if self
+                        .run_benchmark(&orchestration, &test_type, &logger)
+                        .is_err()
+                    {
+                        // At present, we purposefully do not bubble this error
+                        // up because there may be more tests to benchmark.
+                    }
                 }
 
                 self.trip();
@@ -193,6 +205,38 @@ impl Benchmarker {
     // PRIVATES
     //
 
+    /// Runs the benchmarker container against the given test orchestration.
+    fn run_benchmark(
+        &mut self,
+        orchestration: &DockerOrchestration,
+        test_type: &(&String, &String),
+        logger: &Logger,
+    ) -> ToolsetResult<()> {
+        let container_id =
+            create_benchmarker_container(&self.docker_config, orchestration, test_type)?;
+        let container_ids = (container_id, None);
+
+        connect_container_to_network(
+            &self.docker_config,
+            &orchestration.network_id,
+            &container_ids,
+        )?;
+        if let Ok(mut benchmarker) = self.benchmarker_container_id.try_lock() {
+            benchmarker.requires_wait_to_stop = true;
+            benchmarker.container_id = Some(container_ids.0.clone());
+        }
+        self.trip();
+        start_benchmarker_container(&self.docker_config, test_type, &container_ids, logger)?;
+        // This signals that the benchmarker exited naturally on
+        // its own, so we don't need to stop its container.
+        if let Ok(mut benchmarker) = self.benchmarker_container_id.try_lock() {
+            benchmarker.requires_wait_to_stop = false;
+            benchmarker.container_id = None;
+        }
+
+        Ok(())
+    }
+
     /// Runs the verifier against the given test orchestration and returns the
     /// `Verification` result.
     fn run_verification(
@@ -205,7 +249,7 @@ impl Benchmarker {
     ) -> ToolsetResult<Verification> {
         self.trip();
         let container_id =
-            create_verifier_container(&self.docker_config, &orchestration, &test_type)?;
+            create_verifier_container(&self.docker_config, orchestration, test_type)?;
 
         let container_ids = (container_id, None);
 
@@ -226,9 +270,9 @@ impl Benchmarker {
             &self.docker_config,
             project,
             test,
-            &test_type,
+            test_type,
             &container_ids,
-            &logger,
+            logger,
         )?;
         // This signals that the verifier exited naturally on
         // its own, so we don't need to stop its container.
@@ -265,7 +309,7 @@ impl Benchmarker {
             project,
             test,
             &database_container_id,
-            &logger,
+            logger,
         )?;
 
         let container_id = create_container(
@@ -285,7 +329,12 @@ impl Benchmarker {
         }
 
         self.trip();
-        start_container(&self.docker_config, &container_ids, &logger)?;
+        start_container(
+            &self.docker_config,
+            &container_ids,
+            &self.docker_config.server_docker_host,
+            logger,
+        )?;
 
         if let Ok(mut application_container_id) = self.application_container_id.try_lock() {
             application_container_id.container_id = Some(container_ids.0.clone());
@@ -338,6 +387,7 @@ impl Benchmarker {
     /// off the running containers vec.
     fn stop_containers(&mut self) -> ToolsetResult<()> {
         stop_docker_container_future(&self.docker_config, &self.verifier_container_id);
+        stop_docker_container_future(&self.docker_config, &self.benchmarker_container_id);
         stop_docker_container_future(&self.docker_config, &self.application_container_id);
         stop_docker_container_future(&self.docker_config, &self.database_container_id);
 
@@ -386,7 +436,12 @@ impl Benchmarker {
             }
 
             self.trip();
-            start_container(&self.docker_config, &container_ids, &logger)?;
+            start_container(
+                &self.docker_config,
+                &container_ids,
+                &self.docker_config.database_docker_host,
+                &logger,
+            )?;
 
             if let Ok(mut database_container_id) = self.database_container_id.try_lock() {
                 database_container_id.container_id = Some(container_ids.0.clone());

@@ -32,7 +32,12 @@ impl Write for Tarchive {
 }
 
 /// Pulls an image given by `image_name` into the daemon's registry.
-pub fn _pull_image(config: &DockerConfig, image_name: &str, logger: &Logger) -> ToolsetResult<()> {
+pub fn _pull_image(
+    config: &DockerConfig,
+    image_name: &str,
+    docker_host: &str,
+    logger: &Logger,
+) -> ToolsetResult<()> {
     let query_string = format!("?fromImage={}&tag=latest", image_name);
 
     let mut easy = Easy2::new(BuildImage::new(logger));
@@ -43,7 +48,7 @@ pub fn _pull_image(config: &DockerConfig, image_name: &str, logger: &Logger) -> 
     easy.post(true)?;
     easy.url(&format!(
         "http://{}/images/create{}",
-        config.docker_host, query_string
+        docker_host, query_string
     ))?;
     easy.perform()?;
 
@@ -126,7 +131,7 @@ fn build_image_unsafe(
     easy.post_field_size(len as u64)?;
     easy.url(&format!(
         "http://{}/build{}",
-        config.docker_host, query_string
+        config.server_docker_host, query_string
     ))?;
     easy.post_fields_copy(bytes)?;
     easy.perform()?;

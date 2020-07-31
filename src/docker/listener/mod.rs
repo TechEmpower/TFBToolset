@@ -1,6 +1,7 @@
 use curl::easy::WriteError;
 
 pub mod application;
+pub mod benchmarker;
 pub mod build_container;
 pub mod build_image;
 pub mod build_network;

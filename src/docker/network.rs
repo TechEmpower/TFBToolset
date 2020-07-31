@@ -89,7 +89,10 @@ pub fn create_network(config: &DockerConfig, test: &Test) -> ToolsetResult<Strin
     let len = json.len();
 
     easy.post(true)?;
-    easy.url(&format!("http://{}/networks/create", config.docker_host))?;
+    easy.url(&format!(
+        "http://{}/networks/create",
+        config.server_docker_host
+    ))?;
     easy.http_headers(headers)?;
     easy.in_filesize(len as u64)?;
     easy.post_field_size(len as u64)?;
@@ -165,7 +168,7 @@ fn connect_container_to_network_unsafe(
     easy.post(true)?;
     easy.url(&format!(
         "http://{}/networks/{}/connect",
-        config.docker_host, network_id
+        config.server_docker_host, network_id
     ))?;
     easy.http_headers(headers)?;
     easy.in_filesize(len as u64)?;
@@ -190,7 +193,7 @@ fn delete_network(config: &DockerConfig, network_name: &str) -> ToolsetResult<()
     easy.custom_request("DELETE")?;
     easy.url(&format!(
         "http://{}/networks/{}",
-        config.docker_host, network_name
+        config.server_docker_host, network_name
     ))?;
     easy.perform()?;
 

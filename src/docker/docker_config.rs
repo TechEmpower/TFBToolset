@@ -7,9 +7,11 @@ use std::str::FromStr;
 #[derive(Debug, Clone)]
 pub struct DockerConfig {
     pub use_unix_socket: bool,
-    pub docker_host: String,
+    pub server_docker_host: String,
     pub server_host: String,
+    pub database_docker_host: String,
     pub database_host: String,
+    pub client_docker_host: String,
     pub client_host: String,
     pub network_mode: NetworkMode,
     pub concurrency_levels: String,
@@ -17,10 +19,24 @@ pub struct DockerConfig {
 }
 impl DockerConfig {
     pub fn new(matches: &ArgMatches) -> Self {
-        let docker_host = format!(
+        let server_docker_host = format!(
             "{}:2375",
             matches
-                .value_of(options::args::DOCKER_HOST)
+                .value_of(options::args::SERVER_DOCKER_HOST)
+                .unwrap()
+                .to_string()
+        );
+        let database_docker_host = format!(
+            "{}:2375",
+            matches
+                .value_of(options::args::DATABASE_DOCKER_HOST)
+                .unwrap()
+                .to_string()
+        );
+        let client_docker_host = format!(
+            "{}:2375",
+            matches
+                .value_of(options::args::CLIENT_DOCKER_HOST)
                 .unwrap()
                 .to_string()
         );
@@ -52,7 +68,8 @@ impl DockerConfig {
             false
         } else {
             // However, in benchmarking with a multi-machine setup, we want to
-            // communicate over TCP.
+            // communicate over TCP (also, Windows can only communicate over
+            // TCP as of this writing).
             server_host == options::args::SERVER_HOST_DEFAULT
         };
 
@@ -60,9 +77,11 @@ impl DockerConfig {
 
         Self {
             use_unix_socket,
-            docker_host,
+            server_docker_host,
             server_host,
+            database_docker_host,
             database_host,
+            client_docker_host,
             client_host,
             network_mode,
             concurrency_levels,

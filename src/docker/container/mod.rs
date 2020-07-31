@@ -2,6 +2,7 @@ use crate::config::{Project, Test};
 use crate::docker::container::create_options::{bridge, host};
 use crate::docker::docker_config::DockerConfig;
 use crate::docker::listener::application::Application;
+use crate::docker::listener::benchmarker::Benchmarker;
 use crate::docker::listener::build_container::BuildContainer;
 use crate::docker::listener::inspect_container::InspectContainer;
 use crate::docker::listener::simple::Simple;
@@ -111,7 +112,10 @@ pub fn create_verifier_container(
     let len = json.as_bytes().len();
 
     easy.post(true)?;
-    easy.url(&format!("http://{}/containers/create", config.docker_host))?;
+    easy.url(&format!(
+        "http://{}/containers/create",
+        config.server_docker_host
+    ))?;
     easy.http_headers(headers)?;
     easy.in_filesize(len as u64)?;
     easy.post_field_size(len as u64)?;
@@ -140,6 +144,19 @@ pub fn create_verifier_container(
         },
         Err(e) => Err(FailedToCreateDockerVerifierContainerError(e.to_string())),
     }
+}
+
+/// Creates the container for the `TFBBenchmarker`.
+/// Note: this function makes the assumption that the image has already been
+/// pulled from Dockerhub and the Docker daemon is aware of it.
+/// todo - TFBBenchmarker does not exist yet.
+/// Call `pull_benchmarker()` before running.
+pub fn create_benchmarker_container(
+    _config: &DockerConfig,
+    _orchestration: &DockerOrchestration,
+    _test_type: &(&String, &String),
+) -> ToolsetResult<String> {
+    Ok(String::from("TODO"))
 }
 
 /// Gets both the internet and host port binding for the container given by
@@ -184,15 +201,33 @@ pub fn get_port_bindings_for_container(
 pub fn start_container(
     docker_config: &DockerConfig,
     container_ids: &(String, Option<String>),
+    docker_host: &str,
     logger: &Logger,
 ) -> ToolsetResult<()> {
-    match start_container_unsafe(docker_config, &container_ids.0, logger) {
+    match start_container_unsafe(docker_config, &container_ids.0, docker_host, logger) {
         Err(e) => Err(stop_containers_because_of_error(
             docker_config,
             container_ids,
             e,
         )),
         _ => Ok(()),
+    }
+}
+
+/// Starts the benchmarker container and logs its stdout/stderr.
+pub fn start_benchmarker_container(
+    docker_config: &DockerConfig,
+    test_type: &(&String, &String),
+    container_ids: &(String, Option<String>),
+    logger: &Logger,
+) -> ToolsetResult<()> {
+    match start_benchmarker_container_unsafe(docker_config, test_type, &container_ids.0, logger) {
+        Err(e) => Err(stop_containers_because_of_error(
+            docker_config,
+            container_ids,
+            e,
+        )),
+        Ok(_) => Ok(()),
     }
 }
 
@@ -256,7 +291,7 @@ pub fn stop_container(config: &DockerConfig, container_id: &str) -> ToolsetResul
     easy.post(true)?;
     easy.url(&format!(
         "http://{}/containers/{}/stop",
-        config.docker_host, container_id
+        config.server_docker_host, container_id
     ))?;
     easy.perform()?;
 
@@ -333,7 +368,10 @@ fn create_container_unsafe(
     let len = json.as_bytes().len();
 
     easy.post(true)?;
-    easy.url(&format!("http://{}/containers/create", config.docker_host))?;
+    easy.url(&format!(
+        "http://{}/containers/create",
+        config.server_docker_host
+    ))?;
     easy.http_headers(headers)?;
     easy.in_filesize(len as u64)?;
     easy.post_field_size(len as u64)?;
@@ -368,6 +406,7 @@ fn create_container_unsafe(
 fn start_container_unsafe(
     config: &DockerConfig,
     container_id: &str,
+    docker_host: &str,
     logger: &Logger,
 ) -> ToolsetResult<()> {
     let mut easy = Easy2::new(Simple::new());
@@ -378,13 +417,48 @@ fn start_container_unsafe(
     easy.post(true)?;
     easy.url(&format!(
         "http://{}/containers/{}/start",
-        config.docker_host, container_id
+        docker_host, container_id
     ))?;
     easy.post_fields_copy(&[])?;
     easy.perform()?;
 
     match easy.response_code() {
         Ok(204) => attach_to_container_and_log(config, container_id, logger),
+        Ok(code) => {
+            if let Some(error) = &easy.get_ref().error_message {
+                return Err(FailedToStartDockerContainerError(error.clone(), code));
+            }
+            Err(DockerContainerStartError(code))
+        }
+        Err(e) => Err(ToolsetError::CurlError(e)),
+    }
+}
+
+/// Starts the Benchmarker container for the given `Test`.
+/// Note: this function makes the assumption that the container is already
+/// built and that the docker daemon is aware of it.
+/// Call `create_container()` before running.
+fn start_benchmarker_container_unsafe(
+    config: &DockerConfig,
+    test_type: &(&String, &String),
+    container_id: &str,
+    logger: &Logger,
+) -> ToolsetResult<()> {
+    let mut easy = Easy2::new(Simple::new());
+    if config.use_unix_socket {
+        easy.unix_socket("/var/run/docker.sock")?;
+    }
+
+    easy.post(true)?;
+    easy.url(&format!(
+        "http://{}/containers/{}/start",
+        config.client_docker_host, container_id
+    ))?;
+    easy.post_fields_copy(&[])?;
+    easy.perform()?;
+
+    match easy.response_code() {
+        Ok(204) => attach_to_benchmarker_and_log(config, test_type, container_id, logger),
         Ok(code) => {
             if let Some(error) = &easy.get_ref().error_message {
                 return Err(FailedToStartDockerContainerError(error.clone(), code));
@@ -415,7 +489,7 @@ fn start_verification_container_unsafe(
     easy.post(true)?;
     easy.url(&format!(
         "http://{}/containers/{}/start",
-        config.docker_host, container_id
+        config.server_docker_host, container_id
     ))?;
     easy.post_fields_copy(&[])?;
     easy.perform()?;
@@ -447,7 +521,7 @@ fn get_port_bindings_for_container_unsafe(
 
     easy.url(&format!(
         "http://{}/containers/{}/json",
-        config.docker_host, container_id
+        config.server_docker_host, container_id
     ))?;
     easy.perform()?;
 
@@ -465,7 +539,7 @@ fn kill_container(config: &DockerConfig, container_id: &str) -> ToolsetResult<()
     easy.post(true)?;
     easy.url(&format!(
         "http://{}/containers/{}/kill",
-        config.docker_host, container_id
+        config.server_docker_host, container_id
     ))?;
     easy.perform()?;
 
@@ -498,7 +572,7 @@ fn attach_to_container_and_log(
     easy.post(true)?;
     easy.url(&format!(
         "http://{}/containers/{}/attach{}",
-        config.docker_host, container_id, query_string
+        config.server_docker_host, container_id, query_string
     ))?;
 
     thread::spawn(move || easy.perform().unwrap());
@@ -529,9 +603,38 @@ fn attach_to_verifier_and_log(
     easy.post(true)?;
     easy.url(&format!(
         "http://{}/containers/{}/attach{}",
-        config.docker_host, container_id, query_string
+        config.server_docker_host, container_id, query_string
     ))?;
     easy.perform()?;
 
     Ok(easy.get_ref().verification.clone())
+}
+
+/// Attaches to a running container given by `container_id` in a blocking way.
+/// While it is expected that the `Benchmarker` handler will log to
+/// stdout/stderr, it will be blocking the current thread while doing so, and
+/// eventually exit.
+/// Note: this function makes the assumption that the container is already
+/// built and running.
+/// Call `start_container()` before running.
+fn attach_to_benchmarker_and_log(
+    config: &DockerConfig,
+    test_type: &(&String, &String),
+    container_id: &str,
+    logger: &Logger,
+) -> ToolsetResult<()> {
+    let mut easy = Easy2::new(Benchmarker::new(test_type, logger));
+    if config.use_unix_socket {
+        easy.unix_socket("/var/run/docker.sock")?;
+    }
+
+    let query_string = "?logs=1&stream=1&stdout=1&stderr=1";
+    easy.post(true)?;
+    easy.url(&format!(
+        "http://{}/containers/{}/attach{}",
+        config.server_docker_host, container_id, query_string
+    ))?;
+    easy.perform()?;
+
+    Ok(())
 }

@@ -22,12 +22,14 @@ pub mod args {
     pub const LIST_TESTS_WITH_TAG: &str = "List Tests with Tag";
     pub const LIST_TESTS_FOR_FRAMEWORK: &str = "List Tests for Framework";
     pub const DURATION: &str = "Duration";
-    pub const DOCKER_HOST: &str = "Docker Host";
+    pub const SERVER_DOCKER_HOST: &str = "Server Docker Host";
     pub const DOCKER_HOST_DEFAULT: &str = "localhost";
     pub const SERVER_HOST: &str = "Server Host";
     pub const SERVER_HOST_DEFAULT: &str = "tfb-server";
+    pub const DATABASE_DOCKER_HOST: &str = "Database Docker Host";
     pub const DATABASE_HOST: &str = "Database Host";
     pub const DATABASE_HOST_DEFAULT: &str = "tfb-database";
+    pub const CLIENT_DOCKER_HOST: &str = "Client Docker Host";
     pub const CLIENT_HOST: &str = "Client Host";
     pub const CLIENT_HOST_DEFAULT: &str = "tfb-client";
     pub const CONCURRENCY_LEVELS: &str = "Concurrency Levels";
@@ -183,9 +185,21 @@ pub fn parse() -> App<'static> {
                 .default_value("15")
         )
         .arg(
-            Arg::with_name(args::DOCKER_HOST)
-                .about("Hostname/IP for the Docker daemon")
-                .long("docker-host")
+            Arg::with_name(args::SERVER_DOCKER_HOST)
+                .about("Hostname/IP for the Server Docker daemon")
+                .long("server-docker-host")
+                .default_value(args::DOCKER_HOST_DEFAULT)
+        )
+        .arg(
+            Arg::with_name(args::DATABASE_DOCKER_HOST)
+                .about("Hostname/IP for the Database Docker daemon")
+                .long("database-docker-host")
+                .default_value(args::DOCKER_HOST_DEFAULT)
+        )
+        .arg(
+            Arg::with_name(args::CLIENT_DOCKER_HOST)
+                .about("Hostname/IP for the Client Docker daemon")
+                .long("client-docker-host")
                 .default_value(args::DOCKER_HOST_DEFAULT)
         )
         .arg(

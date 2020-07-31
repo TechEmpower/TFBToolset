@@ -50,7 +50,9 @@ impl Logger {
         }
     }
 
-    /// Sets the `log_dir` of this `Logger`.
+    /// Helper function for creating a simple Logger with a given `log_dir`.
+    /// Note: this Logger can later be configured to write to a file, but the
+    /// other convenience functions are probably preferable.
     pub fn in_dir(log_dir: &str) -> Logger {
         let log_dir = PathBuf::from(log_dir);
 
