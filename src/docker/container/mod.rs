@@ -1,49 +1,73 @@
 use crate::config::{Project, Test};
-use crate::docker::container::create_options::{bridge, host};
 use crate::docker::docker_config::DockerConfig;
 use crate::docker::listener::application::Application;
-use crate::docker::listener::benchmarker::Benchmarker;
 use crate::docker::listener::build_container::BuildContainer;
 use crate::docker::listener::inspect_container::InspectContainer;
 use crate::docker::listener::simple::Simple;
 use crate::docker::listener::verifier::Verifier;
-use crate::docker::network::NetworkMode;
 use crate::docker::{DockerContainerIdFuture, DockerOrchestration, Verification};
-use crate::error::ToolsetError::{
-    DockerContainerCreateError, DockerContainerStartError, DockerVerifierContainerCreateError,
-    FailedToCreateDockerContainerError, FailedToCreateDockerVerifierContainerError,
-    FailedToKillDockerContainerError, FailedToStartDockerContainerError,
-};
 use crate::error::{ToolsetError, ToolsetResult};
 use crate::io::Logger;
-use curl::easy::{Easy2, List};
+use curl::easy::Easy2;
+use dockurl::container::create::host_config::HostConfig;
+use dockurl::container::create::networking_config::{
+    EndpointSettings, EndpointsConfig, NetworkingConfig,
+};
+use dockurl::container::create::options::Options;
+use dockurl::container::{attach_to_container, kill_container, stop_container};
 use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use std::thread;
 use std::time::Duration;
-
-pub mod create_options;
 
 /// Creates the container for the given `Test`.
 /// Note: this function makes the assumption that the image is already
 /// built and that the Docker daemon is aware of it.
 /// Call `build_image_for_test()` before running.
 pub fn create_container(
-    docker_config: &DockerConfig,
+    config: &DockerConfig,
     image_id: &str,
     network_id: &str,
     host_name: &str,
-    database_container_id: &Option<String>,
+    docker_host: &str,
 ) -> ToolsetResult<String> {
-    match create_container_unsafe(docker_config, image_id, network_id, host_name) {
-        Ok(id) => Ok(id),
-        Err(e) => {
-            if let Some(container_id) = database_container_id {
-                stop_container(docker_config, container_id)?;
-            }
-            Err(e)
+    let mut options = Options::new();
+    options.image(image_id);
+    options.hostname(host_name);
+    options.domain_name(host_name);
+
+    let mut host_config = HostConfig::new();
+    match &config.network_mode {
+        dockurl::network::NetworkMode::Bridge => {
+            host_config.network_mode(dockurl::network::NetworkMode::Bridge)
+        }
+        dockurl::network::NetworkMode::Host => {
+            host_config.extra_host("tfb-database", &config.database_host);
+            host_config.network_mode(dockurl::network::NetworkMode::Host);
         }
     }
+    host_config.publish_all_ports(true);
+
+    options.host_config(host_config);
+
+    let mut endpoint_settings = EndpointSettings::new();
+    endpoint_settings.alias(host_name);
+    endpoint_settings.network_id(network_id);
+
+    options.networking_config(NetworkingConfig {
+        endpoints_config: EndpointsConfig { endpoint_settings },
+    });
+
+    options.tty(true);
+
+    let container_id = dockurl::container::create_container(
+        options,
+        config.use_unix_socket,
+        docker_host,
+        BuildContainer::new(),
+    )?;
+
+    Ok(container_id)
 }
 
 /// Creates the container for the `TFBVerifier`.
@@ -56,94 +80,47 @@ pub fn create_verifier_container(
     orchestration: &DockerOrchestration,
     test_type: &(&String, &String),
 ) -> ToolsetResult<String> {
-    let mut easy = Easy2::new(BuildContainer::new());
-    if config.use_unix_socket {
-        easy.unix_socket("/var/run/docker.sock")?;
+    let mut options = Options::new();
+    options.image("tfb.verifier");
+    options.tty(true);
+    options.add_env("PORT", &orchestration.host_internal_port);
+    options.add_env("ENDPOINT", test_type.1);
+    options.add_env("TEST_TYPE", test_type.0);
+    options.add_env("CONCURRENCY_LEVELS", &config.concurrency_levels);
+    if let Some(database_name) = &orchestration.database_name {
+        options.add_env("DATABASE", database_name);
     }
 
-    let mut headers = List::new();
-    headers.append("Content-Type: application/json")?;
-
-    let json = match &config.network_mode {
-        NetworkMode::Bridge => {
-            let mut builder = bridge::Builder::new("tfb.verifier")
-                .publish_all_ports(true)
-                .network_id(&orchestration.network_id)
-                .env(&format!("PORT={}", orchestration.host_internal_port))
-                .env(&format!("ENDPOINT={}", test_type.1.clone()))
-                .env(&format!("TEST_TYPE={}", test_type.0.clone()))
-                .env(&format!(
-                    "CONCURRENCY_LEVELS={}",
-                    &config.concurrency_levels
-                ));
-            if orchestration.database_name.is_some() {
-                builder = builder.env(&format!(
-                    "DATABASE={}",
-                    orchestration
-                        .database_name
-                        .as_ref()
-                        .unwrap_or(&String::new())
-                ));
-            }
-            builder.build().to_json()
+    let mut host_config = HostConfig::new();
+    match &config.network_mode {
+        dockurl::network::NetworkMode::Bridge => {
+            host_config.network_mode(dockurl::network::NetworkMode::Bridge)
         }
-        NetworkMode::Host => {
-            let mut builder = host::Builder::new("tfb.verifier")
-                .with_extra_host(&format!("tfb-database:{}", config.database_host))
-                .env(&format!("PORT={}", orchestration.host_internal_port))
-                .env(&format!("ENDPOINT={}", test_type.1.clone()))
-                .env(&format!("TEST_TYPE={}", test_type.0.clone()))
-                .env(&format!(
-                    "CONCURRENCY_LEVELS={}",
-                    &config.concurrency_levels
-                ));
-            if orchestration.database_name.is_some() {
-                builder = builder.env(&format!(
-                    "DATABASE={}",
-                    orchestration
-                        .database_name
-                        .as_ref()
-                        .unwrap_or(&String::new())
-                ));
-            }
-            builder.build().to_json()
+        dockurl::network::NetworkMode::Host => {
+            host_config.extra_host("tfb-server", &config.server_host);
+            host_config.extra_host("tfb-database", &config.database_host);
+            host_config.network_mode(dockurl::network::NetworkMode::Host);
         }
-    };
-    let len = json.as_bytes().len();
-
-    easy.post(true)?;
-    easy.url(&format!(
-        "http://{}/containers/create",
-        config.server_docker_host
-    ))?;
-    easy.http_headers(headers)?;
-    easy.in_filesize(len as u64)?;
-    easy.post_field_size(len as u64)?;
-    easy.post_fields_copy(json.as_bytes())?;
-    easy.perform()?;
-
-    match easy.response_code() {
-        Ok(code) => match code {
-            201 => {
-                if let Some(container_id) = &easy.get_mut().container_id {
-                    return Ok(container_id.clone());
-                } else if let Some(error) = &easy.get_ref().error_message {
-                    return Err(FailedToCreateDockerVerifierContainerError(error.clone()));
-                }
-                Err(DockerVerifierContainerCreateError)
-            }
-            code => {
-                if let Some(error) = &easy.get_ref().error_message {
-                    return Err(FailedToCreateDockerVerifierContainerError(error.clone()));
-                }
-                Err(FailedToCreateDockerVerifierContainerError(format!(
-                    "{}",
-                    code
-                )))
-            }
-        },
-        Err(e) => Err(FailedToCreateDockerVerifierContainerError(e.to_string())),
     }
+    host_config.publish_all_ports(true);
+
+    options.host_config(host_config);
+
+    let mut endpoint_settings = EndpointSettings::new();
+    endpoint_settings.network_id(&orchestration.network_id);
+
+    options.networking_config(NetworkingConfig {
+        endpoints_config: EndpointsConfig { endpoint_settings },
+    });
+
+    let container_id = dockurl::container::create_container(
+        options,
+        config.use_unix_socket,
+        &config.client_docker_host,
+        BuildContainer::new(),
+    )?;
+
+    Ok(container_id)
 }
 
 /// Creates the container for the `TFBBenchmarker`.
@@ -156,7 +133,77 @@ pub fn create_benchmarker_container(
     _orchestration: &DockerOrchestration,
     _test_type: &(&String, &String),
 ) -> ToolsetResult<String> {
-    Ok(String::from("TODO"))
+    // let mut easy = Easy2::new(BuildContainer::new());
+    // if config.use_unix_socket {
+    //     easy.unix_socket("/var/run/docker.sock")?;
+    // }
+    //
+    // let mut headers = List::new();
+    // headers.append("Content-Type: application/json")?;
+    //
+    // let json = match &config.network_mode {
+    //     NetworkMode::Bridge => bridge::Builder::new("tfb.benchmarker")
+    //         .publish_all_ports(true)
+    //         .network_id(&orchestration.network_id)
+    //         .env(&format!("name={}", ""))
+    //         .env(&format!("server_host={}", ""))
+    //         .env(&format!("levels={}", ""))
+    //         .env(&format!("duration={}", ""))
+    //         .env(&format!("max_concurrency={}", ""))
+    //         .env(&format!("max_threads={}", ""))
+    //         .env(&format!("pipeline={}", ""))
+    //         .env(&format!("accept={}", ""))
+    //         .build()
+    //         .to_json(),
+    //     NetworkMode::Host => host::Builder::new("tfb.benchmarker")
+    //         .with_extra_host(&format!("tfb-server:{}", config.server_host))
+    //         .env(&format!("name={}", ""))
+    //         .env(&format!("server_host={}", ""))
+    //         .env(&format!("levels={}", ""))
+    //         .env(&format!("duration={}", ""))
+    //         .env(&format!("max_concurrency={}", ""))
+    //         .env(&format!("max_threads={}", ""))
+    //         .env(&format!("pipeline={}", ""))
+    //         .env(&format!("accept={}", ""))
+    //         .build()
+    //         .to_json(),
+    // };
+    // let len = json.as_bytes().len();
+    //
+    // easy.post(true)?;
+    // easy.url(&format!(
+    //     "http://{}/containers/create",
+    //     config.server_docker_host
+    // ))?;
+    // easy.http_headers(headers)?;
+    // easy.in_filesize(len as u64)?;
+    // easy.post_field_size(len as u64)?;
+    // easy.post_fields_copy(json.as_bytes())?;
+    // easy.perform()?;
+    //
+    // match easy.response_code() {
+    //     Ok(code) => match code {
+    //         201 => {
+    //             if let Some(container_id) = &easy.get_mut().container_id {
+    //                 return Ok(container_id.clone());
+    //             } else if let Some(error) = &easy.get_ref().error_message {
+    //                 return Err(FailedToCreateDockerVerifierContainerError(error.clone()));
+    //             }
+    //             Err(DockerVerifierContainerCreateError)
+    //         }
+    //         code => {
+    //             if let Some(error) = &easy.get_ref().error_message {
+    //                 return Err(FailedToCreateDockerVerifierContainerError(error.clone()));
+    //             }
+    //             Err(FailedToCreateDockerVerifierContainerError(format!(
+    //                 "{}",
+    //                 code
+    //             )))
+    //         }
+    //     },
+    //     Err(e) => Err(FailedToCreateDockerVerifierContainerError(e.to_string())),
+    // }
+    Ok("".to_string())
 }
 
 /// Gets both the internet and host port binding for the container given by
@@ -170,7 +217,12 @@ pub fn get_database_port_bindings(
         match get_port_bindings_for_container_unsafe(docker_config, container_id) {
             Ok(ports) => database_ports = (Some(ports.0), Some(ports.1)),
             Err(e) => {
-                stop_container(docker_config, container_id)?;
+                stop_container(
+                    container_id,
+                    &docker_config.database_docker_host,
+                    docker_config.use_unix_socket,
+                    Simple::new(),
+                )?;
                 return Err(e);
             }
         }
@@ -204,13 +256,33 @@ pub fn start_container(
     docker_host: &str,
     logger: &Logger,
 ) -> ToolsetResult<()> {
-    match start_container_unsafe(docker_config, &container_ids.0, docker_host, logger) {
+    match dockurl::container::start_container(
+        &container_ids.0,
+        docker_host,
+        docker_config.use_unix_socket,
+        Simple::new(),
+    ) {
         Err(e) => Err(stop_containers_because_of_error(
             docker_config,
             container_ids,
-            e,
+            ToolsetError::DockerError(e),
         )),
-        _ => Ok(()),
+        _ => {
+            let container_id = container_ids.0.clone();
+            let docker_host = docker_config.client_docker_host.clone();
+            let use_unix_socket = docker_config.use_unix_socket;
+            let logger = logger.clone();
+            thread::spawn(move || {
+                attach_to_container(
+                    &container_id,
+                    &docker_host,
+                    use_unix_socket,
+                    Application::new(&logger),
+                )
+                .unwrap();
+            });
+            Ok(())
+        }
     }
 }
 
@@ -241,20 +313,32 @@ pub fn start_verification_container(
     container_ids: &(String, Option<String>),
     logger: &Logger,
 ) -> ToolsetResult<Verification> {
-    match start_verification_container_unsafe(
-        docker_config,
-        project,
-        test,
-        test_type,
+    match dockurl::container::start_container(
         &container_ids.0,
-        logger,
+        &docker_config.client_docker_host,
+        docker_config.use_unix_socket,
+        Simple::new(),
     ) {
         Err(e) => Err(stop_containers_because_of_error(
             docker_config,
             container_ids,
-            e,
+            ToolsetError::DockerError(e),
         )),
-        Ok(verification) => Ok(verification),
+        Ok(()) => {
+            match attach_to_container(
+                &container_ids.0,
+                &docker_config.client_docker_host,
+                docker_config.use_unix_socket,
+                Verifier::new(project, test, test_type, logger),
+            ) {
+                Ok(easy) => Ok(easy.get_ref().verification.clone()),
+                Err(e) => Err(stop_containers_because_of_error(
+                    docker_config,
+                    container_ids,
+                    ToolsetError::DockerError(e),
+                )),
+            }
+        }
     }
 }
 
@@ -265,39 +349,28 @@ pub fn stop_containers_because_of_error(
     container_ids: &(String, Option<String>),
     error: ToolsetError,
 ) -> ToolsetError {
-    match stop_container(config, &container_ids.0) {
-        Err(e) => e,
+    match stop_container(
+        &container_ids.0,
+        &config.server_docker_host,
+        config.use_unix_socket,
+        Simple::new(),
+    ) {
+        Err(e) => ToolsetError::DockerError(e),
         _ => {
             if let Some(container_id) = &container_ids.1 {
-                match stop_container(config, container_id) {
-                    Err(e) => e,
+                match stop_container(
+                    container_id,
+                    &config.database_docker_host,
+                    config.use_unix_socket,
+                    Simple::new(),
+                ) {
+                    Err(e) => ToolsetError::DockerError(e),
                     _ => error,
                 }
             } else {
                 error
             }
         }
-    }
-}
-
-/// Stops the running container given by `container_id`.
-/// This *will not* exit the running application. Callers must do so manually.
-pub fn stop_container(config: &DockerConfig, container_id: &str) -> ToolsetResult<()> {
-    let mut easy = Easy2::new(Simple::new());
-    if config.use_unix_socket {
-        easy.unix_socket("/var/run/docker.sock")?;
-    }
-
-    easy.post(true)?;
-    easy.url(&format!(
-        "http://{}/containers/{}/stop",
-        config.server_docker_host, container_id
-    ))?;
-    easy.perform()?;
-
-    match easy.response_code()? {
-        204 => Ok(()),
-        _ => kill_container(config, container_id),
     }
 }
 
@@ -321,7 +394,13 @@ pub fn stop_docker_container_future(
     }
     if let Ok(mut container) = container.try_lock() {
         if let Some(container_id) = &container.container_id {
-            kill_container(&docker_config, container_id).unwrap();
+            kill_container(
+                container_id,
+                &container.docker_host,
+                docker_config.use_unix_socket,
+                Simple::new(),
+            )
+            .unwrap();
             container.container_id = None;
         }
     }
@@ -331,181 +410,40 @@ pub fn stop_docker_container_future(
 // PRIVATES
 //
 
-/// Creates the container for the given `Test`.
-/// Note: this function makes the assumption that the image is already
-/// built and that the docker daemon is aware of it.
-/// Call `build_image_for_test()` before running.
-fn create_container_unsafe(
-    config: &DockerConfig,
-    image_id: &str,
-    network_id: &str,
-    host_name: &str,
-) -> ToolsetResult<String> {
-    let mut easy = Easy2::new(BuildContainer::new());
-    if config.use_unix_socket {
-        easy.unix_socket("/var/run/docker.sock")?;
-    }
-
-    let mut headers = List::new();
-    headers.append("Content-Type: application/json")?;
-
-    let json = match &config.network_mode {
-        NetworkMode::Bridge => bridge::Builder::new(image_id)
-            .publish_all_ports(true)
-            .domainname(host_name)
-            .hostname(host_name)
-            .network_id(network_id)
-            .alias(host_name)
-            .build()
-            .to_json(),
-        NetworkMode::Host => host::Builder::new(image_id)
-            .with_extra_host(&format!("tfb-database:{}", config.database_host))
-            .domainname(host_name)
-            .hostname(host_name)
-            .build()
-            .to_json(),
-    };
-    let len = json.as_bytes().len();
-
-    easy.post(true)?;
-    easy.url(&format!(
-        "http://{}/containers/create",
-        config.server_docker_host
-    ))?;
-    easy.http_headers(headers)?;
-    easy.in_filesize(len as u64)?;
-    easy.post_field_size(len as u64)?;
-    easy.post_fields_copy(json.as_bytes())?;
-    easy.perform()?;
-
-    match easy.response_code() {
-        Ok(code) => match code {
-            201 => {
-                if let Some(container_id) = &easy.get_mut().container_id {
-                    return Ok(container_id.clone());
-                } else if let Some(error) = &easy.get_ref().error_message {
-                    return Err(FailedToCreateDockerContainerError(error.clone()));
-                }
-                Err(DockerContainerCreateError)
-            }
-            code => {
-                if let Some(error) = &easy.get_ref().error_message {
-                    return Err(FailedToCreateDockerContainerError(error.clone()));
-                }
-                Err(FailedToCreateDockerContainerError(format!("{}", code)))
-            }
-        },
-        Err(e) => Err(FailedToCreateDockerContainerError(e.to_string())),
-    }
-}
-
-/// Starts the container for the given `Test`.
-/// Note: this function makes the assumption that the container is already
-/// built and that the docker daemon is aware of it.
-/// Call `create_container()` before running.
-fn start_container_unsafe(
-    config: &DockerConfig,
-    container_id: &str,
-    docker_host: &str,
-    logger: &Logger,
-) -> ToolsetResult<()> {
-    let mut easy = Easy2::new(Simple::new());
-    if config.use_unix_socket {
-        easy.unix_socket("/var/run/docker.sock")?;
-    }
-
-    easy.post(true)?;
-    easy.url(&format!(
-        "http://{}/containers/{}/start",
-        docker_host, container_id
-    ))?;
-    easy.post_fields_copy(&[])?;
-    easy.perform()?;
-
-    match easy.response_code() {
-        Ok(204) => attach_to_container_and_log(config, container_id, logger),
-        Ok(code) => {
-            if let Some(error) = &easy.get_ref().error_message {
-                return Err(FailedToStartDockerContainerError(error.clone(), code));
-            }
-            Err(DockerContainerStartError(code))
-        }
-        Err(e) => Err(ToolsetError::CurlError(e)),
-    }
-}
-
 /// Starts the Benchmarker container for the given `Test`.
 /// Note: this function makes the assumption that the container is already
 /// built and that the docker daemon is aware of it.
 /// Call `create_container()` before running.
 fn start_benchmarker_container_unsafe(
-    config: &DockerConfig,
-    test_type: &(&String, &String),
-    container_id: &str,
-    logger: &Logger,
+    _config: &DockerConfig,
+    _test_type: &(&String, &String),
+    _container_id: &str,
+    _logger: &Logger,
 ) -> ToolsetResult<()> {
-    let mut easy = Easy2::new(Simple::new());
-    if config.use_unix_socket {
-        easy.unix_socket("/var/run/docker.sock")?;
-    }
-
-    easy.post(true)?;
-    easy.url(&format!(
-        "http://{}/containers/{}/start",
-        config.client_docker_host, container_id
-    ))?;
-    easy.post_fields_copy(&[])?;
-    easy.perform()?;
-
-    match easy.response_code() {
-        Ok(204) => attach_to_benchmarker_and_log(config, test_type, container_id, logger),
-        Ok(code) => {
-            if let Some(error) = &easy.get_ref().error_message {
-                return Err(FailedToStartDockerContainerError(error.clone(), code));
-            }
-            Err(DockerContainerStartError(code))
-        }
-        Err(e) => Err(ToolsetError::CurlError(e)),
-    }
-}
-
-/// Starts the verification container for the given `Test`.
-/// Note: this function makes the assumption that the container is already
-/// built and that the docker daemon is aware of it.
-/// Call `create_container()` before running.
-fn start_verification_container_unsafe(
-    config: &DockerConfig,
-    project: &Project,
-    test: &Test,
-    test_type: &(&String, &String),
-    container_id: &str,
-    logger: &Logger,
-) -> ToolsetResult<Verification> {
-    let mut easy = Easy2::new(Simple::new());
-    if config.use_unix_socket {
-        easy.unix_socket("/var/run/docker.sock")?;
-    }
-
-    easy.post(true)?;
-    easy.url(&format!(
-        "http://{}/containers/{}/start",
-        config.server_docker_host, container_id
-    ))?;
-    easy.post_fields_copy(&[])?;
-    easy.perform()?;
-
-    match easy.response_code() {
-        Ok(204) => {
-            attach_to_verifier_and_log(config, project, test, test_type, container_id, logger)
-        }
-        Ok(code) => {
-            if let Some(error) = &easy.get_ref().error_message {
-                return Err(FailedToStartDockerContainerError(error.clone(), code));
-            }
-            Err(DockerContainerStartError(code))
-        }
-        Err(e) => Err(ToolsetError::CurlError(e)),
-    }
+    // let mut easy = Easy2::new(Simple::new());
+    // if config.use_unix_socket {
+    //     easy.unix_socket("/var/run/docker.sock")?;
+    // }
+    //
+    // easy.post(true)?;
+    // easy.url(&format!(
+    //     "http://{}/containers/{}/start",
+    //     config.client_docker_host, container_id
+    // ))?;
+    // easy.post_fields_copy(&[])?;
+    // easy.perform()?;
+    //
+    // match easy.response_code() {
+    //     Ok(204) => attach_to_benchmarker_and_log(config, test_type, container_id, logger),
+    //     Ok(code) => {
+    //         if let Some(error) = &easy.get_ref().error_message {
+    //             return Err(FailedToStartDockerContainerError(error.clone(), code));
+    //         }
+    //         Err(DockerContainerStartError(code))
+    //     }
+    //     Err(e) => Err(ToolsetError::CurlError(e)),
+    // }
+    Ok(())
 }
 
 /// Gets both the internet and host port binding for the container given by
@@ -526,115 +464,4 @@ fn get_port_bindings_for_container_unsafe(
     easy.perform()?;
 
     easy.get_ref().get_host_ports()
-}
-
-/// Kills the running container given by `container_id`.
-/// This *will not* exit the running application. Callers must do so manually.
-fn kill_container(config: &DockerConfig, container_id: &str) -> ToolsetResult<()> {
-    let mut easy = Easy2::new(Simple::new());
-    if config.use_unix_socket {
-        easy.unix_socket("/var/run/docker.sock")?;
-    }
-
-    easy.post(true)?;
-    easy.url(&format!(
-        "http://{}/containers/{}/kill",
-        config.server_docker_host, container_id
-    ))?;
-    easy.perform()?;
-
-    match easy.response_code()? {
-        204 => Ok(()),
-        _ => Err(FailedToKillDockerContainerError(format!(
-            "Could not kill container: {}",
-            container_id
-        ))),
-    }
-}
-
-/// Attaches to a running container given by `container_id` in a non-blocking
-/// way. This spawns a new thread to proxy stdout/stderr from the running
-/// container to stdout/stderr.
-/// Note: this function makes the assumption that the container is already
-/// built and running.
-/// Call `start_container()` before running.
-fn attach_to_container_and_log(
-    config: &DockerConfig,
-    container_id: &str,
-    logger: &Logger,
-) -> ToolsetResult<()> {
-    let mut easy = Easy2::new(Application::new(logger));
-    if config.use_unix_socket {
-        easy.unix_socket("/var/run/docker.sock")?;
-    }
-
-    let query_string = "?logs=1&stream=1&stdout=1&stderr=1";
-    easy.post(true)?;
-    easy.url(&format!(
-        "http://{}/containers/{}/attach{}",
-        config.server_docker_host, container_id, query_string
-    ))?;
-
-    thread::spawn(move || easy.perform().unwrap());
-
-    Ok(())
-}
-
-/// Attaches to a running container given by `container_id` in a blocking way.
-/// While it is expected that the `Verifier` handler will log to stdout/stderr,
-/// it will be blocking the current thread while doing so, and eventually exit.
-/// Note: this function makes the assumption that the container is already
-/// built and running.
-/// Call `start_container()` before running.
-fn attach_to_verifier_and_log(
-    config: &DockerConfig,
-    project: &Project,
-    test: &Test,
-    test_type: &(&String, &String),
-    container_id: &str,
-    logger: &Logger,
-) -> ToolsetResult<Verification> {
-    let mut easy = Easy2::new(Verifier::new(project, test, test_type, logger));
-    if config.use_unix_socket {
-        easy.unix_socket("/var/run/docker.sock")?;
-    }
-
-    let query_string = "?logs=1&stream=1&stdout=1&stderr=1";
-    easy.post(true)?;
-    easy.url(&format!(
-        "http://{}/containers/{}/attach{}",
-        config.server_docker_host, container_id, query_string
-    ))?;
-    easy.perform()?;
-
-    Ok(easy.get_ref().verification.clone())
-}
-
-/// Attaches to a running container given by `container_id` in a blocking way.
-/// While it is expected that the `Benchmarker` handler will log to
-/// stdout/stderr, it will be blocking the current thread while doing so, and
-/// eventually exit.
-/// Note: this function makes the assumption that the container is already
-/// built and running.
-/// Call `start_container()` before running.
-fn attach_to_benchmarker_and_log(
-    config: &DockerConfig,
-    test_type: &(&String, &String),
-    container_id: &str,
-    logger: &Logger,
-) -> ToolsetResult<()> {
-    let mut easy = Easy2::new(Benchmarker::new(test_type, logger));
-    if config.use_unix_socket {
-        easy.unix_socket("/var/run/docker.sock")?;
-    }
-
-    let query_string = "?logs=1&stream=1&stdout=1&stderr=1";
-    easy.post(true)?;
-    easy.url(&format!(
-        "http://{}/containers/{}/attach{}",
-        config.server_docker_host, container_id, query_string
-    ))?;
-    easy.perform()?;
-
-    Ok(())
 }

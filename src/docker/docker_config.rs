@@ -1,8 +1,7 @@
-use crate::docker::network::NetworkMode;
 use crate::io::{create_results_dir, Logger};
 use crate::options;
 use clap::ArgMatches;
-use std::str::FromStr;
+use dockurl::network::NetworkMode::{Bridge, Host};
 
 #[derive(Debug, Clone)]
 pub struct DockerConfig {
@@ -13,7 +12,7 @@ pub struct DockerConfig {
     pub database_host: String,
     pub client_docker_host: String,
     pub client_host: String,
-    pub network_mode: NetworkMode,
+    pub network_mode: dockurl::network::NetworkMode,
     pub concurrency_levels: String,
     pub logger: Logger,
 }
@@ -52,8 +51,10 @@ impl DockerConfig {
             .value_of(options::args::CLIENT_HOST)
             .unwrap()
             .to_string();
-        let network_mode =
-            NetworkMode::from_str(matches.value_of(options::args::NETWORK_MODE).unwrap()).unwrap();
+        let network_mode = match matches.value_of(options::args::NETWORK_MODE).unwrap() {
+            options::network_modes::HOST => Host,
+            _ => Bridge,
+        };
         let concurrency_levels = matches
             .values_of(options::args::CONCURRENCY_LEVELS)
             .unwrap()

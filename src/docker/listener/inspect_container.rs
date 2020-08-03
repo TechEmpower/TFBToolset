@@ -1,9 +1,9 @@
 use crate::docker::docker_config::DockerConfig;
 use crate::docker::listener::accumulate;
-use crate::docker::network::NetworkMode;
 use crate::error::ToolsetError::FailedToInspectDockerContainerError;
 use crate::error::ToolsetResult;
 use curl::easy::{Handler, WriteError};
+use dockurl::network::NetworkMode;
 use serde_json::Value;
 
 pub struct InspectContainer {

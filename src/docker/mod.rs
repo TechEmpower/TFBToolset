@@ -24,7 +24,7 @@ pub struct DockerOrchestration {
     pub db_internal_port: Option<String>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Verification {
     pub framework_name: String,
     pub test_name: String,
@@ -36,12 +36,14 @@ pub struct Verification {
 pub struct DockerContainerIdFuture {
     pub requires_wait_to_stop: bool,
     pub container_id: Option<String>,
+    pub docker_host: String,
 }
 impl DockerContainerIdFuture {
-    pub fn new() -> Self {
+    pub fn new(docker_host: &str) -> Self {
         DockerContainerIdFuture {
             requires_wait_to_stop: false,
             container_id: None,
+            docker_host: docker_host.to_string(),
         }
     }
 

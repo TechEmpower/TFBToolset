@@ -50,12 +50,12 @@ impl Handler for Verifier {
     }
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Debug)]
 pub struct Warning {
     pub message: String,
     pub short_message: String,
 }
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Debug)]
 pub struct Error {
     pub message: String,
     pub short_message: String,

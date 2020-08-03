@@ -4,13 +4,13 @@ use crate::config::{Named, Project, Test};
 use crate::docker::container::{
     create_benchmarker_container, create_container, create_verifier_container,
     get_database_port_bindings, get_port_bindings_for_container, start_benchmarker_container,
-    start_container, start_verification_container, stop_container,
-    stop_containers_because_of_error, stop_docker_container_future,
+    start_container, start_verification_container, stop_containers_because_of_error,
+    stop_docker_container_future,
 };
 use crate::docker::docker_config::DockerConfig;
 use crate::docker::image::build_image;
 use crate::docker::listener::simple::Simple;
-use crate::docker::network::{connect_container_to_network, create_network, NetworkMode};
+use crate::docker::network::{connect_container_to_network, create_network};
 use crate::docker::{DockerContainerIdFuture, DockerOrchestration, Verification};
 use crate::error::ToolsetError::{NoResponseFromDockerContainerError, VerificationFailedException};
 use crate::error::ToolsetResult;
@@ -18,6 +18,8 @@ use crate::io::{report_verifications, Logger};
 use crate::metadata;
 use colored::Colorize;
 use curl::easy::Easy2;
+use dockurl::container::stop_container;
+use dockurl::network::NetworkMode;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -54,13 +56,27 @@ pub struct Benchmarker {
 }
 impl Benchmarker {
     pub fn new(matches: ArgMatches) -> Self {
+        let docker_config = DockerConfig::new(&matches);
+        let application_container_id = Arc::new(Mutex::new(DockerContainerIdFuture::new(
+            &docker_config.server_docker_host,
+        )));
+        let database_container_id = Arc::new(Mutex::new(DockerContainerIdFuture::new(
+            &docker_config.database_docker_host,
+        )));
+        let verifier_container_id = Arc::new(Mutex::new(DockerContainerIdFuture::new(
+            &docker_config.client_docker_host,
+        )));
+        let benchmarker_container_id = Arc::new(Mutex::new(DockerContainerIdFuture::new(
+            &docker_config.client_docker_host,
+        )));
+
         let benchmarker = Self {
-            docker_config: DockerConfig::new(&matches),
+            docker_config,
             projects: metadata::list_projects_to_run(&matches),
-            application_container_id: Arc::new(Mutex::new(DockerContainerIdFuture::new())),
-            database_container_id: Arc::new(Mutex::new(DockerContainerIdFuture::new())),
-            verifier_container_id: Arc::new(Mutex::new(DockerContainerIdFuture::new())),
-            benchmarker_container_id: Arc::new(Mutex::new(DockerContainerIdFuture::new())),
+            application_container_id,
+            database_container_id,
+            verifier_container_id,
+            benchmarker_container_id,
             ctrlc_received: Arc::new(AtomicBool::new(false)),
         };
 
@@ -218,6 +234,7 @@ impl Benchmarker {
 
         connect_container_to_network(
             &self.docker_config,
+            &self.docker_config.server_docker_host,
             &orchestration.network_id,
             &container_ids,
         )?;
@@ -255,6 +272,7 @@ impl Benchmarker {
 
         connect_container_to_network(
             &self.docker_config,
+            &self.docker_config.server_docker_host,
             &orchestration.network_id,
             &container_ids,
         )?;
@@ -296,7 +314,7 @@ impl Benchmarker {
         logger: &Logger,
     ) -> ToolsetResult<DockerOrchestration> {
         let network_id = match &self.docker_config.network_mode {
-            NetworkMode::Bridge => create_network(&self.docker_config, test)?,
+            NetworkMode::Bridge => create_network(&self.docker_config)?,
             NetworkMode::Host => "host".to_string(),
         };
 
@@ -304,25 +322,24 @@ impl Benchmarker {
         let database_ports =
             get_database_port_bindings(&self.docker_config, &database_container_id)?;
 
-        let image_id = build_image(
-            &self.docker_config,
-            project,
-            test,
-            &database_container_id,
-            logger,
-        )?;
+        let image_id = build_image(&self.docker_config, project, test, logger)?;
 
         let container_id = create_container(
             &self.docker_config,
             &image_id,
             &network_id,
             &self.docker_config.server_host,
-            &database_container_id,
+            &self.docker_config.server_docker_host,
         )?;
 
         let container_ids = (container_id, database_container_id);
 
-        connect_container_to_network(&self.docker_config, &network_id, &container_ids)?;
+        connect_container_to_network(
+            &self.docker_config,
+            &self.docker_config.server_docker_host,
+            &network_id,
+            &container_ids,
+        )?;
 
         if let Ok(mut application_container_id) = self.application_container_id.try_lock() {
             application_container_id.requires_wait_to_stop = true;
@@ -421,12 +438,17 @@ impl Benchmarker {
                 &format!("tfb.database.{}", database.to_lowercase()),
                 network_id,
                 &self.docker_config.database_host,
-                &None,
+                &self.docker_config.database_docker_host,
             )?;
 
             let container_ids = (container_id, None);
 
-            connect_container_to_network(&self.docker_config, network_id, &container_ids)?;
+            connect_container_to_network(
+                &self.docker_config,
+                &self.docker_config.database_docker_host,
+                network_id,
+                &container_ids,
+            )?;
 
             let mut logger = Logger::with_prefix(&database);
             logger.quiet = true;
@@ -466,10 +488,20 @@ impl Benchmarker {
             self.trip();
             if slept_for > 60 {
                 self.trip();
-                stop_container(&self.docker_config, &container_ids.0)?;
+                stop_container(
+                    &container_ids.0,
+                    &self.docker_config.server_docker_host,
+                    self.docker_config.use_unix_socket,
+                    Simple::new(),
+                )?;
                 if let Some(database_container_id) = &container_ids.1 {
                     self.trip();
-                    stop_container(&self.docker_config, &database_container_id)?;
+                    stop_container(
+                        database_container_id,
+                        &self.docker_config.database_docker_host,
+                        self.docker_config.use_unix_socket,
+                        Simple::new(),
+                    )?;
                 }
 
                 return Err(NoResponseFromDockerContainerError);
