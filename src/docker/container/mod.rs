@@ -2,19 +2,18 @@ use crate::config::{Project, Test};
 use crate::docker::docker_config::DockerConfig;
 use crate::docker::listener::application::Application;
 use crate::docker::listener::build_container::BuildContainer;
-use crate::docker::listener::inspect_container::InspectContainer;
 use crate::docker::listener::simple::Simple;
 use crate::docker::listener::verifier::Verifier;
 use crate::docker::{DockerContainerIdFuture, DockerOrchestration, Verification};
+use crate::error::ToolsetError::ContainerPortMappingInspectionError;
 use crate::error::{ToolsetError, ToolsetResult};
 use crate::io::Logger;
-use curl::easy::Easy2;
 use dockurl::container::create::host_config::HostConfig;
 use dockurl::container::create::networking_config::{
     EndpointSettings, EndpointsConfig, NetworkingConfig,
 };
 use dockurl::container::create::options::Options;
-use dockurl::container::{attach_to_container, kill_container, stop_container};
+use dockurl::container::{attach_to_container, inspect_container, kill_container, stop_container};
 use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use std::thread;
@@ -214,7 +213,11 @@ pub fn get_database_port_bindings(
 ) -> ToolsetResult<(Option<String>, Option<String>)> {
     let mut database_ports = (None, None);
     if let Some(container_id) = database_container_id {
-        match get_port_bindings_for_container_unsafe(docker_config, container_id) {
+        match get_port_bindings_for_container_unsafe(
+            docker_config,
+            &docker_config.database_docker_host,
+            container_id,
+        ) {
             Ok(ports) => database_ports = (Some(ports.0), Some(ports.1)),
             Err(e) => {
                 stop_container(
@@ -234,9 +237,10 @@ pub fn get_database_port_bindings(
 /// `container_id`.
 pub fn get_port_bindings_for_container(
     docker_config: &DockerConfig,
+    docker_host: &str,
     container_ids: &(String, Option<String>),
 ) -> ToolsetResult<(String, String)> {
-    match get_port_bindings_for_container_unsafe(docker_config, &container_ids.0) {
+    match get_port_bindings_for_container_unsafe(docker_config, docker_host, &container_ids.0) {
         Ok(ports) => Ok(ports),
         Err(e) => Err(stop_containers_because_of_error(
             docker_config,
@@ -331,7 +335,7 @@ pub fn start_verification_container(
                 docker_config.use_unix_socket,
                 Verifier::new(project, test, test_type, logger),
             ) {
-                Ok(easy) => Ok(easy.get_ref().verification.clone()),
+                Ok(verifier) => Ok(verifier.verification),
                 Err(e) => Err(stop_containers_because_of_error(
                     docker_config,
                     container_ids,
@@ -450,18 +454,26 @@ fn start_benchmarker_container_unsafe(
 /// `container_id`.
 fn get_port_bindings_for_container_unsafe(
     config: &DockerConfig,
+    docker_host: &str,
     container_id: &str,
 ) -> ToolsetResult<(String, String)> {
-    let mut easy = Easy2::new(InspectContainer::new(config));
-    if config.use_unix_socket {
-        easy.unix_socket("/var/run/docker.sock")?;
+    let inspection = inspect_container(
+        container_id,
+        docker_host,
+        config.use_unix_socket,
+        Simple::new(),
+    )?;
+
+    for key in inspection.network_settings.ports.keys() {
+        let inner_port: Vec<&str> = key.split('/').collect();
+        if let Some(key) = inspection.network_settings.ports.get(key) {
+            if let Some(port_mapping) = key.get(0) {
+                if let Some(inner_port) = inner_port.get(0) {
+                    return Ok((port_mapping.host_port.clone(), inner_port.to_string()));
+                }
+            }
+        }
     }
 
-    easy.url(&format!(
-        "http://{}/containers/{}/json",
-        config.server_docker_host, container_id
-    ))?;
-    easy.perform()?;
-
-    easy.get_ref().get_host_ports()
+    Err(ContainerPortMappingInspectionError)
 }

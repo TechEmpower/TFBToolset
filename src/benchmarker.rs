@@ -357,7 +357,11 @@ impl Benchmarker {
             application_container_id.container_id = Some(container_ids.0.clone());
         }
 
-        let host_ports = get_port_bindings_for_container(&self.docker_config, &container_ids)?;
+        let host_ports = get_port_bindings_for_container(
+            &self.docker_config,
+            &self.docker_config.server_docker_host,
+            &container_ids,
+        )?;
 
         if let Err(e) = self.wait_until_accepting_requests(&container_ids, &host_ports.0, test) {
             self.trip();
