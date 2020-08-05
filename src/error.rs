@@ -44,4 +44,7 @@ pub enum ToolsetError {
 
     #[error("Failed to inspect container for port mappings")]
     ContainerPortMappingInspectionError,
+
+    #[error("Failed to retrieve benchmark commands")]
+    FailedBenchmarkCommandRetrievalError,
 }

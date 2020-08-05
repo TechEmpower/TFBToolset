@@ -14,6 +14,7 @@ pub struct DockerConfig {
     pub client_host: String,
     pub network_mode: dockurl::network::NetworkMode,
     pub concurrency_levels: String,
+    pub pipeline_concurrency_levels: String,
     pub logger: Logger,
 }
 impl DockerConfig {
@@ -61,6 +62,12 @@ impl DockerConfig {
             .map(|item| item.to_string())
             .collect::<Vec<String>>()
             .join(",");
+        let pipeline_concurrency_levels = matches
+            .values_of(options::args::PIPELINE_CONCURRENCY_LEVELS)
+            .unwrap()
+            .map(|item| item.to_string())
+            .collect::<Vec<String>>()
+            .join(",");
 
         // By default, we communicate with docker over a unix socket.
         let use_unix_socket = if cfg!(windows) {
@@ -86,6 +93,7 @@ impl DockerConfig {
             client_host,
             network_mode,
             concurrency_levels,
+            pipeline_concurrency_levels,
             logger,
         }
     }

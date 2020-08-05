@@ -1,3 +1,4 @@
+pub mod benchmark_command_listener;
 pub mod application;
 pub mod benchmarker;
 pub mod build_container;

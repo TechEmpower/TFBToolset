@@ -3,15 +3,17 @@ use clap::ArgMatches;
 use crate::config::{Named, Project, Test};
 use crate::docker::container::{
     create_benchmarker_container, create_container, create_verifier_container,
-    get_database_port_bindings, get_port_bindings_for_container, start_benchmarker_container,
-    start_container, start_verification_container, stop_containers_because_of_error,
-    stop_docker_container_future,
+    get_database_port_bindings, get_port_bindings_for_container,
+    start_benchmark_command_retrieval_container, start_benchmarker_container, start_container,
+    start_verification_container, stop_containers_because_of_error, stop_docker_container_future,
 };
 use crate::docker::docker_config::DockerConfig;
 use crate::docker::image::build_image;
 use crate::docker::listener::simple::Simple;
 use crate::docker::network::{connect_container_to_network, create_network};
-use crate::docker::{DockerContainerIdFuture, DockerOrchestration, Verification};
+use crate::docker::{
+    BenchmarkCommands, DockerContainerIdFuture, DockerOrchestration, Verification,
+};
 use crate::error::ToolsetError::{NoResponseFromDockerContainerError, VerificationFailedException};
 use crate::error::ToolsetResult;
 use crate::io::{report_verifications, Logger};
@@ -29,6 +31,11 @@ pub mod modes {
     pub const BENCHMARK: &str = "benchmark";
     pub const VERIFY: &str = "verify";
     pub const DEBUG: &str = "debug";
+}
+
+pub enum Mode {
+    Verify,
+    Benchmark,
 }
 
 /// Benchmarker supports three different functions which all perform the
@@ -133,7 +140,7 @@ impl Benchmarker {
                 let orchestration = self.start_test_orchestration(project, test, &logger)?;
                 for test_type in &test.urls {
                     if self
-                        .run_benchmark(&orchestration, &test_type, &logger)
+                        .run_benchmarks(&orchestration, &test_type, &logger)
                         .is_err()
                     {
                         // At present, we purposefully do not bubble this error
@@ -221,15 +228,46 @@ impl Benchmarker {
     // PRIVATES
     //
 
-    /// Runs the benchmarker container against the given test orchestration.
-    fn run_benchmark(
+    ///
+    ///
+    fn run_benchmarks(
         &mut self,
         orchestration: &DockerOrchestration,
         test_type: &(&String, &String),
         logger: &Logger,
     ) -> ToolsetResult<()> {
+        let benchmark_commands = self.run_command_retrieval(&orchestration, &test_type, &logger)?;
+        self.run_benchmark(
+            &orchestration,
+            &test_type,
+            &benchmark_commands.warmup_command,
+            &logger,
+        )?;
+        self.run_benchmark(
+            &orchestration,
+            &test_type,
+            &benchmark_commands.primer_command,
+            &logger,
+        )?;
+        for command in &benchmark_commands.benchmark_commands {
+            self.run_benchmark(&orchestration, &test_type, command, &logger)?;
+        }
+
+        // todo - write results?
+
+        Ok(())
+    }
+
+    /// Runs the benchmarker container against the given test orchestration.
+    fn run_benchmark(
+        &mut self,
+        orchestration: &DockerOrchestration,
+        test_type: &(&String, &String),
+        command: &str,
+        logger: &Logger,
+    ) -> ToolsetResult<()> {
         let container_id =
-            create_benchmarker_container(&self.docker_config, orchestration, test_type)?;
+            create_benchmarker_container(&self.docker_config, orchestration, command)?;
         let container_ids = (container_id, None);
 
         connect_container_to_network(
@@ -238,12 +276,13 @@ impl Benchmarker {
             &orchestration.network_id,
             &container_ids,
         )?;
+
         if let Ok(mut benchmarker) = self.benchmarker_container_id.try_lock() {
             benchmarker.requires_wait_to_stop = true;
             benchmarker.container_id = Some(container_ids.0.clone());
         }
         self.trip();
-        start_benchmarker_container(&self.docker_config, test_type, &container_ids, logger)?;
+        start_benchmarker_container(&self.docker_config, test_type, &container_ids.0, logger)?;
         // This signals that the benchmarker exited naturally on
         // its own, so we don't need to stop its container.
         if let Ok(mut benchmarker) = self.benchmarker_container_id.try_lock() {
@@ -266,7 +305,7 @@ impl Benchmarker {
     ) -> ToolsetResult<Verification> {
         self.trip();
         let container_id =
-            create_verifier_container(&self.docker_config, orchestration, test_type)?;
+            create_verifier_container(&self.docker_config, orchestration, Mode::Verify, test_type)?;
 
         let container_ids = (container_id, None);
 
@@ -300,6 +339,54 @@ impl Benchmarker {
         }
 
         Ok(verification)
+    }
+
+    ///
+    ///
+    fn run_command_retrieval(
+        &mut self,
+        orchestration: &DockerOrchestration,
+        test_type: &(&String, &String),
+        logger: &Logger,
+    ) -> ToolsetResult<BenchmarkCommands> {
+        self.trip();
+        let container_id = create_verifier_container(
+            &self.docker_config,
+            orchestration,
+            Mode::Benchmark,
+            test_type,
+        )?;
+
+        let container_ids = (container_id, None);
+
+        connect_container_to_network(
+            &self.docker_config,
+            &self.docker_config.server_docker_host,
+            &orchestration.network_id,
+            &container_ids,
+        )?;
+
+        // This DockerContainerIdFuture is different than the others
+        // because it blocks until the verifier exits.
+        if let Ok(mut verifier) = self.verifier_container_id.try_lock() {
+            verifier.requires_wait_to_stop = true;
+            verifier.container_id = Some(container_ids.0.clone());
+        }
+        self.trip();
+        let commands = start_benchmark_command_retrieval_container(
+            &self.docker_config,
+            &test_type,
+            &container_ids.0,
+            logger,
+        )?;
+        // This signals that the verifier exited naturally on
+        // its own, so we don't need to stop its container.
+        if let Ok(mut verifier) = self.verifier_container_id.try_lock() {
+            verifier.requires_wait_to_stop = false;
+            verifier.container_id = None;
+        }
+
+        Ok(commands)
     }
 
     /// Starts all the underlying docker orchestration required for the given

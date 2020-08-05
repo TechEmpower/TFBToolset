@@ -4,6 +4,7 @@
 
 use crate::docker::listener::verifier::Error;
 use crate::docker::listener::verifier::Warning;
+use serde::Deserialize;
 use std::task::Poll;
 
 pub mod container;
@@ -31,6 +32,13 @@ pub struct Verification {
     pub type_name: String,
     pub warnings: Vec<Warning>,
     pub errors: Vec<Error>,
+}
+
+#[derive(Deserialize, Clone, Debug)]
+pub struct BenchmarkCommands {
+    pub primer_command: String,
+    pub warmup_command: String,
+    pub benchmark_commands: Vec<String>,
 }
 
 pub struct DockerContainerIdFuture {

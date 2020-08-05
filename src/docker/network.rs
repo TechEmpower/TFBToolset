@@ -2,7 +2,8 @@ use crate::docker::container::stop_containers_because_of_error;
 use crate::docker::docker_config::DockerConfig;
 use crate::docker::listener::build_network::BuildNetwork;
 use crate::docker::listener::simple::Simple;
-use crate::error::{ToolsetError, ToolsetResult};
+use crate::error::ToolsetError::DockerError;
+use crate::error::ToolsetResult;
 use dockurl::network::NetworkMode;
 
 /// Creates the "TFBNetwork" network.
@@ -23,7 +24,7 @@ pub fn create_network(config: &DockerConfig) -> ToolsetResult<String> {
             BuildNetwork::new(),
         ) {
             Ok(network_id) => Ok(network_id),
-            Err(error) => Err(ToolsetError::DockerError(error)),
+            Err(error) => Err(DockerError(error)),
         }
     }
 }

@@ -1,11 +1,18 @@
+use crate::benchmarker::Mode;
 use crate::config::{Project, Test};
 use crate::docker::docker_config::DockerConfig;
 use crate::docker::listener::application::Application;
+use crate::docker::listener::benchmark_command_listener::BenchmarkCommandListener;
+use crate::docker::listener::benchmarker::Benchmarker;
 use crate::docker::listener::build_container::BuildContainer;
 use crate::docker::listener::simple::Simple;
 use crate::docker::listener::verifier::Verifier;
-use crate::docker::{DockerContainerIdFuture, DockerOrchestration, Verification};
-use crate::error::ToolsetError::ContainerPortMappingInspectionError;
+use crate::docker::{
+    BenchmarkCommands, DockerContainerIdFuture, DockerOrchestration, Verification,
+};
+use crate::error::ToolsetError::{
+    ContainerPortMappingInspectionError, DockerError, FailedBenchmarkCommandRetrievalError,
+};
 use crate::error::{ToolsetError, ToolsetResult};
 use crate::io::Logger;
 use dockurl::container::create::host_config::HostConfig;
@@ -69,6 +76,35 @@ pub fn create_container(
     Ok(container_id)
 }
 
+///
+///
+pub fn create_benchmarker_container(
+    config: &DockerConfig,
+    orchestration: &DockerOrchestration,
+    command: &str,
+) -> ToolsetResult<String> {
+    let mut options = Options::new();
+    options.image("techempower/tfb.wrk"); // todo - rename
+    options.tty(true);
+    options.cmd(command);
+
+    let mut endpoint_settings = EndpointSettings::new();
+    endpoint_settings.network_id(&orchestration.network_id);
+
+    options.networking_config(NetworkingConfig {
+        endpoints_config: EndpointsConfig { endpoint_settings },
+    });
+
+    let container_id = dockurl::container::create_container(
+        options,
+        config.use_unix_socket,
+        &config.client_docker_host,
+        BuildContainer::new(), // todo -
+    )?;
+
+    Ok(container_id)
+}
+
 /// Creates the container for the `TFBVerifier`.
 /// Note: this function makes the assumption that the image has already been
 /// pulled from Dockerhub and the Docker daemon is aware of it.
@@ -77,15 +113,27 @@ pub fn create_container(
 pub fn create_verifier_container(
     config: &DockerConfig,
     orchestration: &DockerOrchestration,
+    mode: Mode,
     test_type: &(&String, &String),
 ) -> ToolsetResult<String> {
     let mut options = Options::new();
     options.image("tfb.verifier");
     options.tty(true);
+    options.add_env(
+        "MODE",
+        match mode {
+            Mode::Verify => "verify",
+            Mode::Benchmark => "benchmark",
+        },
+    );
     options.add_env("PORT", &orchestration.host_internal_port);
     options.add_env("ENDPOINT", test_type.1);
     options.add_env("TEST_TYPE", test_type.0);
     options.add_env("CONCURRENCY_LEVELS", &config.concurrency_levels);
+    options.add_env(
+        "PIPELINE_CONCURRENCY_LEVELS",
+        &config.pipeline_concurrency_levels,
+    );
     if let Some(database_name) = &orchestration.database_name {
         options.add_env("DATABASE", database_name);
     }
@@ -120,89 +168,6 @@ pub fn create_verifier_container(
     )?;
 
     Ok(container_id)
-}
-
-/// Creates the container for the `TFBBenchmarker`.
-/// Note: this function makes the assumption that the image has already been
-/// pulled from Dockerhub and the Docker daemon is aware of it.
-/// todo - TFBBenchmarker does not exist yet.
-/// Call `pull_benchmarker()` before running.
-pub fn create_benchmarker_container(
-    _config: &DockerConfig,
-    _orchestration: &DockerOrchestration,
-    _test_type: &(&String, &String),
-) -> ToolsetResult<String> {
-    // let mut easy = Easy2::new(BuildContainer::new());
-    // if config.use_unix_socket {
-    //     easy.unix_socket("/var/run/docker.sock")?;
-    // }
-    //
-    // let mut headers = List::new();
-    // headers.append("Content-Type: application/json")?;
-    //
-    // let json = match &config.network_mode {
-    //     NetworkMode::Bridge => bridge::Builder::new("tfb.benchmarker")
-    //         .publish_all_ports(true)
-    //         .network_id(&orchestration.network_id)
-    //         .env(&format!("name={}", ""))
-    //         .env(&format!("server_host={}", ""))
-    //         .env(&format!("levels={}", ""))
-    //         .env(&format!("duration={}", ""))
-    //         .env(&format!("max_concurrency={}", ""))
-    //         .env(&format!("max_threads={}", ""))
-    //         .env(&format!("pipeline={}", ""))
-    //         .env(&format!("accept={}", ""))
-    //         .build()
-    //         .to_json(),
-    //     NetworkMode::Host => host::Builder::new("tfb.benchmarker")
-    //         .with_extra_host(&format!("tfb-server:{}", config.server_host))
-    //         .env(&format!("name={}", ""))
-    //         .env(&format!("server_host={}", ""))
-    //         .env(&format!("levels={}", ""))
-    //         .env(&format!("duration={}", ""))
-    //         .env(&format!("max_concurrency={}", ""))
-    //         .env(&format!("max_threads={}", ""))
-    //         .env(&format!("pipeline={}", ""))
-    //         .env(&format!("accept={}", ""))
-    //         .build()
-    //         .to_json(),
-    // };
-    // let len = json.as_bytes().len();
-    //
-    // easy.post(true)?;
-    // easy.url(&format!(
-    //     "http://{}/containers/create",
-    //     config.server_docker_host
-    // ))?;
-    // easy.http_headers(headers)?;
-    // easy.in_filesize(len as u64)?;
-    // easy.post_field_size(len as u64)?;
-    // easy.post_fields_copy(json.as_bytes())?;
-    // easy.perform()?;
-    //
-    // match easy.response_code() {
-    //     Ok(code) => match code {
-    //         201 => {
-    //             if let Some(container_id) = &easy.get_mut().container_id {
-    //                 return Ok(container_id.clone());
-    //             } else if let Some(error) = &easy.get_ref().error_message {
-    //                 return Err(FailedToCreateDockerVerifierContainerError(error.clone()));
-    //             }
-    //             Err(DockerVerifierContainerCreateError)
-    //         }
-    //         code => {
-    //             if let Some(error) = &easy.get_ref().error_message {
-    //                 return Err(FailedToCreateDockerVerifierContainerError(error.clone()));
-    //             }
-    //             Err(FailedToCreateDockerVerifierContainerError(format!(
-    //                 "{}",
-    //                 code
-    //             )))
-    //         }
-    //     },
-    //     Err(e) => Err(FailedToCreateDockerVerifierContainerError(e.to_string())),
-    // }
-    Ok("".to_string())
 }
 
 /// Gets both the internet and host port binding for the container given by
@@ -269,7 +234,7 @@ pub fn start_container(
         Err(e) => Err(stop_containers_because_of_error(
             docker_config,
             container_ids,
-            ToolsetError::DockerError(e),
+            DockerError(e),
         )),
         _ => {
             let container_id = container_ids.0.clone();
@@ -290,20 +255,84 @@ pub fn start_container(
     }
 }
 
+pub fn start_benchmark_command_retrieval_container(
+    docker_config: &DockerConfig,
+    test_type: &(&String, &String),
+    container_id: &str,
+    logger: &Logger,
+) -> ToolsetResult<BenchmarkCommands> {
+    match dockurl::container::start_container(
+        container_id,
+        &docker_config.client_docker_host,
+        docker_config.use_unix_socket,
+        Simple::new(),
+    ) {
+        Err(e) => Err(stop_containers_because_of_error(
+            docker_config,
+            &(container_id.to_string(), None),
+            DockerError(e),
+        )),
+        Ok(()) => {
+            match attach_to_container(
+                container_id,
+                &docker_config.client_docker_host,
+                docker_config.use_unix_socket,
+                BenchmarkCommandListener::new(test_type, logger),
+            ) {
+                Ok(listener) => {
+                    if let Some(commands) = listener.benchmark_commands {
+                        Ok(commands)
+                    } else {
+                        Err(stop_containers_because_of_error(
+                            docker_config,
+                            &(container_id.to_string(), None),
+                            FailedBenchmarkCommandRetrievalError,
+                        ))
+                    }
+                }
+                Err(e) => Err(stop_containers_because_of_error(
+                    docker_config,
+                    &(container_id.to_string(), None),
+                    DockerError(e),
+                )),
+            }
+        }
+    }
+}
+
 /// Starts the benchmarker container and logs its stdout/stderr.
 pub fn start_benchmarker_container(
     docker_config: &DockerConfig,
     test_type: &(&String, &String),
-    container_ids: &(String, Option<String>),
+    container_id: &str,
     logger: &Logger,
 ) -> ToolsetResult<()> {
-    match start_benchmarker_container_unsafe(docker_config, test_type, &container_ids.0, logger) {
+    match dockurl::container::start_container(
+        container_id,
+        &docker_config.client_docker_host,
+        docker_config.use_unix_socket,
+        Simple::new(),
+    ) {
         Err(e) => Err(stop_containers_because_of_error(
             docker_config,
-            container_ids,
-            e,
+            &(container_id.to_string(), None),
+            DockerError(e),
         )),
-        Ok(_) => Ok(()),
+        Ok(()) => {
+            match attach_to_container(
+                container_id,
+                &docker_config.client_docker_host,
+                docker_config.use_unix_socket,
+                Benchmarker::new(test_type, logger),
+            ) {
+                Ok(_benchmarker) => Ok(()), // todo - impl benchmarker
+                Err(e) => Err(stop_containers_because_of_error(
+                    docker_config,
+                    &(container_id.to_string(), None),
+                    DockerError(e),
+                )),
+            }
+        }
     }
 }
 
@@ -326,7 +355,7 @@ pub fn start_verification_container(
         Err(e) => Err(stop_containers_because_of_error(
             docker_config,
             container_ids,
-            ToolsetError::DockerError(e),
+            DockerError(e),
         )),
         Ok(()) => {
             match attach_to_container(
@@ -339,7 +368,7 @@ pub fn start_verification_container(
                 Err(e) => Err(stop_containers_because_of_error(
                     docker_config,
                     container_ids,
-                    ToolsetError::DockerError(e),
+                    DockerError(e),
                 )),
             }
         }
@@ -359,7 +388,7 @@ pub fn stop_containers_because_of_error(
         config.use_unix_socket,
         Simple::new(),
     ) {
-        Err(e) => ToolsetError::DockerError(e),
+        Err(e) => DockerError(e),
         _ => {
             if let Some(container_id) = &container_ids.1 {
                 match stop_container(
@@ -368,7 +397,7 @@ pub fn stop_containers_because_of_error(
                     config.use_unix_socket,
                     Simple::new(),
                 ) {
-                    Err(e) => ToolsetError::DockerError(e),
+                    Err(e) => DockerError(e),
                     _ => error,
                 }
             } else {
@@ -413,42 +442,6 @@ pub fn stop_docker_container_future(
 //
 // PRIVATES
 //
-
-/// Starts the Benchmarker container for the given `Test`.
-/// Note: this function makes the assumption that the container is already
-/// built and that the docker daemon is aware of it.
-/// Call `create_container()` before running.
-fn start_benchmarker_container_unsafe(
-    _config: &DockerConfig,
-    _test_type: &(&String, &String),
-    _container_id: &str,
-    _logger: &Logger,
-) -> ToolsetResult<()> {
-    // let mut easy = Easy2::new(Simple::new());
-    // if config.use_unix_socket {
-    //     easy.unix_socket("/var/run/docker.sock")?;
-    // }
-    //
-    // easy.post(true)?;
-    // easy.url(&format!(
-    //     "http://{}/containers/{}/start",
-    //     config.client_docker_host, container_id
-    // ))?;
-    // easy.post_fields_copy(&[])?;
-    // easy.perform()?;
-    //
-    // match easy.response_code() {
-    //     Ok(204) => attach_to_benchmarker_and_log(config, test_type, container_id, logger),
-    //     Ok(code) => {
-    //         if let Some(error) = &easy.get_ref().error_message {
-    //             return Err(FailedToStartDockerContainerError(error.clone(), code));
-    //         }
-    //         Err(DockerContainerStartError(code))
-    //     }
-    //     Err(e) => Err(ToolsetError::CurlError(e)),
-    // }
-    Ok(())
-}
 
 /// Gets both the internet and host port binding for the container given by
 /// `container_id`.
