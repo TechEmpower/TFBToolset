@@ -36,9 +36,9 @@ pub struct Verification {
 
 #[derive(Deserialize, Clone, Debug)]
 pub struct BenchmarkCommands {
-    pub primer_command: String,
-    pub warmup_command: String,
-    pub benchmark_commands: Vec<String>,
+    pub primer_command: Vec<String>,
+    pub warmup_command: Vec<String>,
+    pub benchmark_commands: Vec<Vec<String>>,
 }
 
 pub struct DockerContainerIdFuture {

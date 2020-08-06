@@ -7,13 +7,9 @@ pub struct Benchmarker {
     pub error_message: Option<String>,
 }
 impl Benchmarker {
-    pub fn new(test_type: &(&String, &String), logger: &Logger) -> Self {
-        let mut logger = logger.clone();
-        logger.set_log_file(&format!("{}.txt", test_type.0));
-        logger.quiet = true;
-
+    pub fn new(logger: &Logger) -> Self {
         Self {
-            logger,
+            logger: logger.clone(),
             error_message: None,
         }
     }

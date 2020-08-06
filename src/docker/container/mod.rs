@@ -11,16 +11,19 @@ use crate::docker::{
     BenchmarkCommands, DockerContainerIdFuture, DockerOrchestration, Verification,
 };
 use crate::error::ToolsetError::{
-    ContainerPortMappingInspectionError, DockerError, FailedBenchmarkCommandRetrievalError,
+    ContainerPortMappingInspectionError, FailedBenchmarkCommandRetrievalError,
 };
-use crate::error::{ToolsetError, ToolsetResult};
+use crate::error::ToolsetResult;
 use crate::io::Logger;
 use dockurl::container::create::host_config::HostConfig;
 use dockurl::container::create::networking_config::{
     EndpointSettings, EndpointsConfig, NetworkingConfig,
 };
 use dockurl::container::create::options::Options;
-use dockurl::container::{attach_to_container, inspect_container, kill_container, stop_container};
+use dockurl::container::{
+    attach_to_container, get_container_logs, inspect_container, kill_container,
+    wait_for_container_to_exit,
+};
 use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use std::thread;
@@ -81,12 +84,12 @@ pub fn create_container(
 pub fn create_benchmarker_container(
     config: &DockerConfig,
     orchestration: &DockerOrchestration,
-    command: &str,
+    command: &[String],
 ) -> ToolsetResult<String> {
     let mut options = Options::new();
-    options.image("techempower/tfb.wrk"); // todo - rename
+    options.image("tfb.wrk"); // todo - rename
     options.tty(true);
-    options.cmd(command);
+    options.cmds(command);
 
     let mut endpoint_settings = EndpointSettings::new();
     endpoint_settings.network_id(&orchestration.network_id);
@@ -99,7 +102,7 @@ pub fn create_benchmarker_container(
         options,
         config.use_unix_socket,
         &config.client_docker_host,
-        BuildContainer::new(), // todo -
+        BuildContainer::new(),
     )?;
 
     Ok(container_id)
@@ -170,49 +173,34 @@ pub fn create_verifier_container(
     Ok(container_id)
 }
 
-/// Gets both the internet and host port binding for the container given by
-/// `container_id`.
-pub fn get_database_port_bindings(
-    docker_config: &DockerConfig,
-    database_container_id: &Option<String>,
-) -> ToolsetResult<(Option<String>, Option<String>)> {
-    let mut database_ports = (None, None);
-    if let Some(container_id) = database_container_id {
-        match get_port_bindings_for_container_unsafe(
-            docker_config,
-            &docker_config.database_docker_host,
-            container_id,
-        ) {
-            Ok(ports) => database_ports = (Some(ports.0), Some(ports.1)),
-            Err(e) => {
-                stop_container(
-                    container_id,
-                    &docker_config.database_docker_host,
-                    docker_config.use_unix_socket,
-                    Simple::new(),
-                )?;
-                return Err(e);
-            }
-        }
-    }
-    Ok(database_ports)
-}
-
-/// Gets both the internet and host port binding for the container given by
+/// Gets both the internal and host port binding for the container given by
 /// `container_id`.
 pub fn get_port_bindings_for_container(
     docker_config: &DockerConfig,
     docker_host: &str,
-    container_ids: &(String, Option<String>),
+    container_id: &str,
 ) -> ToolsetResult<(String, String)> {
-    match get_port_bindings_for_container_unsafe(docker_config, docker_host, &container_ids.0) {
-        Ok(ports) => Ok(ports),
-        Err(e) => Err(stop_containers_because_of_error(
-            docker_config,
-            container_ids,
-            e,
-        )),
+    let inspection = inspect_container(
+        container_id,
+        docker_host,
+        docker_config.use_unix_socket,
+        Simple::new(),
+    )?;
+
+    if let Some(exposed_ports) = inspection.config.exposed_ports {
+        for key in exposed_ports.keys() {
+            let inner_port: Vec<&str> = key.split('/').collect();
+            if let Some(key) = inspection.network_settings.ports.get(key) {
+                if let Some(port_mapping) = key.get(0) {
+                    if let Some(inner_port) = inner_port.get(0) {
+                        return Ok((port_mapping.host_port.clone(), inner_port.to_string()));
+                    }
+                }
+            }
+        }
     }
+
+    Err(ContainerPortMappingInspectionError)
 }
 
 /// Starts the container for the given `Test`.
@@ -225,115 +213,87 @@ pub fn start_container(
     docker_host: &str,
     logger: &Logger,
 ) -> ToolsetResult<()> {
-    match dockurl::container::start_container(
+    dockurl::container::start_container(
         &container_ids.0,
         docker_host,
         docker_config.use_unix_socket,
         Simple::new(),
-    ) {
-        Err(e) => Err(stop_containers_because_of_error(
-            docker_config,
-            container_ids,
-            DockerError(e),
-        )),
-        _ => {
-            let container_id = container_ids.0.clone();
-            let docker_host = docker_config.client_docker_host.clone();
-            let use_unix_socket = docker_config.use_unix_socket;
-            let logger = logger.clone();
-            thread::spawn(move || {
-                attach_to_container(
-                    &container_id,
-                    &docker_host,
-                    use_unix_socket,
-                    Application::new(&logger),
-                )
-                .unwrap();
-            });
-            Ok(())
-        }
-    }
+    )?;
+    let container_id = container_ids.0.clone();
+    let docker_host = docker_config.client_docker_host.clone();
+    let use_unix_socket = docker_config.use_unix_socket;
+    let logger = logger.clone();
+    thread::spawn(move || {
+        attach_to_container(
+            &container_id,
+            &docker_host,
+            use_unix_socket,
+            Application::new(&logger),
+        )
+        .unwrap();
+    });
+    Ok(())
 }
 
+///
+///
 pub fn start_benchmark_command_retrieval_container(
     docker_config: &DockerConfig,
     test_type: &(&String, &String),
     container_id: &str,
     logger: &Logger,
 ) -> ToolsetResult<BenchmarkCommands> {
-    match dockurl::container::start_container(
+    dockurl::container::start_container(
         container_id,
         &docker_config.client_docker_host,
         docker_config.use_unix_socket,
         Simple::new(),
-    ) {
-        Err(e) => Err(stop_containers_because_of_error(
-            docker_config,
-            &(container_id.to_string(), None),
-            DockerError(e),
-        )),
-        Ok(()) => {
-            match attach_to_container(
-                container_id,
-                &docker_config.client_docker_host,
-                docker_config.use_unix_socket,
-                BenchmarkCommandListener::new(test_type, logger),
-            ) {
-                Ok(listener) => {
-                    if let Some(commands) = listener.benchmark_commands {
-                        Ok(commands)
-                    } else {
-                        Err(stop_containers_because_of_error(
-                            docker_config,
-                            &(container_id.to_string(), None),
-                            FailedBenchmarkCommandRetrievalError,
-                        ))
-                    }
-                }
-                Err(e) => Err(stop_containers_because_of_error(
-                    docker_config,
-                    &(container_id.to_string(), None),
-                    DockerError(e),
-                )),
-            }
-        }
+    )?;
+    wait_for_container_to_exit(
+        container_id,
+        &docker_config.client_docker_host,
+        docker_config.use_unix_socket,
+        Simple::new(),
+    )?;
+    let listener = get_container_logs(
+        container_id,
+        &docker_config.client_docker_host,
+        docker_config.use_unix_socket,
+        BenchmarkCommandListener::new(test_type, logger),
+    )?;
+    if let Some(commands) = listener.benchmark_commands {
+        Ok(commands)
+    } else {
+        Err(FailedBenchmarkCommandRetrievalError)
     }
 }
 
 /// Starts the benchmarker container and logs its stdout/stderr.
 pub fn start_benchmarker_container(
     docker_config: &DockerConfig,
-    test_type: &(&String, &String),
     container_id: &str,
     logger: &Logger,
 ) -> ToolsetResult<()> {
-    match dockurl::container::start_container(
+    dockurl::container::start_container(
         container_id,
         &docker_config.client_docker_host,
         docker_config.use_unix_socket,
         Simple::new(),
-    ) {
-        Err(e) => Err(stop_containers_because_of_error(
-            docker_config,
-            &(container_id.to_string(), None),
-            DockerError(e),
-        )),
-        Ok(()) => {
-            match attach_to_container(
-                container_id,
-                &docker_config.client_docker_host,
-                docker_config.use_unix_socket,
-                Benchmarker::new(test_type, logger),
-            ) {
-                Ok(_benchmarker) => Ok(()), // todo - impl benchmarker
-                Err(e) => Err(stop_containers_because_of_error(
-                    docker_config,
-                    &(container_id.to_string(), None),
-                    DockerError(e),
-                )),
-            }
-        }
-    }
+    )?;
+    wait_for_container_to_exit(
+        container_id,
+        &docker_config.client_docker_host,
+        docker_config.use_unix_socket,
+        Simple::new(),
+    )?;
+    get_container_logs(
+        container_id,
+        &docker_config.client_docker_host,
+        docker_config.use_unix_socket,
+        Benchmarker::new(logger),
+    )?;
+    // todo - impl benchmarker
+    Ok(())
 }
 
 /// Starts the verification container, captures its stdout/stderr, parses any
@@ -346,65 +306,20 @@ pub fn start_verification_container(
     container_ids: &(String, Option<String>),
     logger: &Logger,
 ) -> ToolsetResult<Verification> {
-    match dockurl::container::start_container(
+    dockurl::container::start_container(
         &container_ids.0,
         &docker_config.client_docker_host,
         docker_config.use_unix_socket,
         Simple::new(),
-    ) {
-        Err(e) => Err(stop_containers_because_of_error(
-            docker_config,
-            container_ids,
-            DockerError(e),
-        )),
-        Ok(()) => {
-            match attach_to_container(
-                &container_ids.0,
-                &docker_config.client_docker_host,
-                docker_config.use_unix_socket,
-                Verifier::new(project, test, test_type, logger),
-            ) {
-                Ok(verifier) => Ok(verifier.verification),
-                Err(e) => Err(stop_containers_because_of_error(
-                    docker_config,
-                    container_ids,
-                    DockerError(e),
-                )),
-            }
-        }
-    }
-}
-
-/// Helper function to ensure that running containers started by the toolset
-/// are stopped on error.
-pub fn stop_containers_because_of_error(
-    config: &DockerConfig,
-    container_ids: &(String, Option<String>),
-    error: ToolsetError,
-) -> ToolsetError {
-    match stop_container(
+    )?;
+    let verifier = attach_to_container(
         &container_ids.0,
-        &config.server_docker_host,
-        config.use_unix_socket,
-        Simple::new(),
-    ) {
-        Err(e) => DockerError(e),
-        _ => {
-            if let Some(container_id) = &container_ids.1 {
-                match stop_container(
-                    container_id,
-                    &config.database_docker_host,
-                    config.use_unix_socket,
-                    Simple::new(),
-                ) {
-                    Err(e) => DockerError(e),
-                    _ => error,
-                }
-            } else {
-                error
-            }
-        }
-    }
+        &docker_config.client_docker_host,
+        docker_config.use_unix_socket,
+        Verifier::new(project, test, test_type, logger),
+    )?;
+
+    Ok(verifier.verification)
 }
 
 /// Polls until `container` is ready with either some `container_id` or `None`,
@@ -418,14 +333,14 @@ pub fn stop_docker_container_future(
 ) {
     let mut poll = Poll::Pending;
     while poll == Poll::Pending {
-        if let Ok(container) = container.try_lock() {
+        if let Ok(container) = container.lock() {
             poll = container.poll();
             if poll == Poll::Pending {
                 thread::sleep(Duration::from_secs(1));
             }
         }
     }
-    if let Ok(mut container) = container.try_lock() {
+    if let Ok(mut container) = container.lock() {
         if let Some(container_id) = &container.container_id {
             kill_container(
                 container_id,
@@ -433,40 +348,8 @@ pub fn stop_docker_container_future(
                 docker_config.use_unix_socket,
                 Simple::new(),
             )
-            .unwrap();
+            .unwrap_or(());
             container.container_id = None;
         }
     }
-}
-
-//
-// PRIVATES
-//
-
-/// Gets both the internet and host port binding for the container given by
-/// `container_id`.
-fn get_port_bindings_for_container_unsafe(
-    config: &DockerConfig,
-    docker_host: &str,
-    container_id: &str,
-) -> ToolsetResult<(String, String)> {
-    let inspection = inspect_container(
-        container_id,
-        docker_host,
-        config.use_unix_socket,
-        Simple::new(),
-    )?;
-
-    for key in inspection.network_settings.ports.keys() {
-        let inner_port: Vec<&str> = key.split('/').collect();
-        if let Some(key) = inspection.network_settings.ports.get(key) {
-            if let Some(port_mapping) = key.get(0) {
-                if let Some(inner_port) = inner_port.get(0) {
-                    return Ok((port_mapping.host_port.clone(), inner_port.to_string()));
-                }
-            }
-        }
-    }
-
-    Err(ContainerPortMappingInspectionError)
 }

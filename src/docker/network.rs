@@ -1,4 +1,3 @@
-use crate::docker::container::stop_containers_because_of_error;
 use crate::docker::docker_config::DockerConfig;
 use crate::docker::listener::build_network::BuildNetwork;
 use crate::docker::listener::simple::Simple;
@@ -37,30 +36,15 @@ pub fn connect_container_to_network(
     network_id: &str,
     container_ids: &(String, Option<String>),
 ) -> ToolsetResult<()> {
-    connect_container_to_network_unsafe(docker_config, docker_host, &container_ids.0, network_id)
-        .map_err(|e| stop_containers_because_of_error(docker_config, container_ids, e))
-}
-
-//
-// PRIVATES
-//
-
-/// Attaches the container given by `container_id` to the network given by
-/// `network_id`.
-fn connect_container_to_network_unsafe(
-    config: &DockerConfig,
-    docker_host: &str,
-    container_id: &str,
-    network_id: &str,
-) -> ToolsetResult<()> {
-    dockurl::network::connect_container_to_network(
-        container_id,
+    match dockurl::network::connect_container_to_network(
+        &container_ids.0,
         network_id,
         vec![],
         docker_host,
-        config.use_unix_socket,
+        docker_config.use_unix_socket,
         Simple::new(),
-    )?;
-
-    Ok(())
+    ) {
+        Ok(()) => Ok(()),
+        Err(error) => Err(DockerError(error)),
+    }
 }

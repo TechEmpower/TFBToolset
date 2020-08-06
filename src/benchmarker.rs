@@ -3,9 +3,9 @@ use clap::ArgMatches;
 use crate::config::{Named, Project, Test};
 use crate::docker::container::{
     create_benchmarker_container, create_container, create_verifier_container,
-    get_database_port_bindings, get_port_bindings_for_container,
-    start_benchmark_command_retrieval_container, start_benchmarker_container, start_container,
-    start_verification_container, stop_containers_because_of_error, stop_docker_container_future,
+    get_port_bindings_for_container, start_benchmark_command_retrieval_container,
+    start_benchmarker_container, start_container, start_verification_container,
+    stop_docker_container_future,
 };
 use crate::docker::docker_config::DockerConfig;
 use crate::docker::image::build_image;
@@ -137,14 +137,23 @@ impl Benchmarker {
                 let mut logger = logger.clone();
                 logger.set_test(test);
                 self.trip();
-                let orchestration = self.start_test_orchestration(project, test, &logger)?;
-                for test_type in &test.urls {
-                    if self
-                        .run_benchmarks(&orchestration, &test_type, &logger)
-                        .is_err()
-                    {
-                        // At present, we purposefully do not bubble this error
-                        // up because there may be more tests to benchmark.
+                match self.start_test_orchestration(project, test, &logger) {
+                    Ok(orchestration) => {
+                        for test_type in &test.urls {
+                            if self
+                                .run_benchmarks(&orchestration, &test_type, &logger)
+                                .is_err()
+                            {
+                                // At present, we purposefully do not bubble this error
+                                // up because there may be more tests to benchmark.
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        // todo - we're swallowing errors here... probably bad.
+                        //  That said, we don't want to panic; the next test
+                        //  may succeed.
+                        self.stop_containers()?;
                     }
                 }
 
@@ -167,16 +176,23 @@ impl Benchmarker {
         if let Some(project) = projects.get(0) {
             if let Some(test) = project.tests.get(0) {
                 let logger = Logger::with_prefix(&test.get_name());
-                let orchestration = self.start_test_orchestration(&project, &test, &logger)?;
-                logger.log(
-                    &format!(
-                        "Entering debug mode. Server http://localhost:{} has started. CTRL-c to stop.",
-                        orchestration.host_port
-                    )
-                    .yellow(),
-                )?;
-                loop {
-                    thread::sleep(Duration::from_secs(1));
+                match self.start_test_orchestration(&project, &test, &logger) {
+                    Ok(orchestration) => {
+                        logger.log(
+                            &format!(
+                                "Entering debug mode. Server http://localhost:{} has started. CTRL-c to stop.",
+                                orchestration.host_port
+                            )
+                                .yellow(),
+                        )?;
+                        loop {
+                            thread::sleep(Duration::from_secs(1));
+                        }
+                    }
+                    Err(e) => {
+                        self.stop_containers()?;
+                        return Err(e);
+                    }
                 }
             }
         }
@@ -196,18 +212,28 @@ impl Benchmarker {
                 let mut logger = logger.clone();
                 logger.set_test(test);
                 self.trip();
-                let orchestration = self.start_test_orchestration(project, test, &logger)?;
-                for test_type in &test.urls {
-                    let verification = self.run_verification(
-                        &project,
-                        &test,
-                        &orchestration,
-                        &test_type,
-                        &logger,
-                    )?;
-                    succeeded &= verification.errors.is_empty();
-                    verifications.push(verification);
-                }
+                match self.start_test_orchestration(project, test, &logger) {
+                    Ok(orchestration) => {
+                        for test_type in &test.urls {
+                            let verification = self.run_verification(
+                                &project,
+                                &test,
+                                &orchestration,
+                                &test_type,
+                                &logger,
+                            )?;
+                            succeeded &= verification.errors.is_empty();
+                            verifications.push(verification);
+                        }
+                    }
+                    Err(_) => {
+                        // todo - we're swallowing errors here... probably bad.
+                        //  That said, we don't want to panic; the next test
+                        //  may succeed.
+                        succeeded = false;
+                        self.stop_containers()?;
+                    }
+                };
 
                 self.trip();
                 self.stop_containers()?;
@@ -236,22 +262,26 @@ impl Benchmarker {
         test_type: &(&String, &String),
         logger: &Logger,
     ) -> ToolsetResult<()> {
+        logger.log(format!("Benchmarking: {}", test_type.0))?;
+        let mut logger = logger.clone();
+        logger.set_log_file(&format!("{}.txt", test_type.0));
+        logger.quiet = true;
         let benchmark_commands = self.run_command_retrieval(&orchestration, &test_type, &logger)?;
-        self.run_benchmark(
-            &orchestration,
-            &test_type,
-            &benchmark_commands.warmup_command,
-            &logger,
-        )?;
-        self.run_benchmark(
-            &orchestration,
-            &test_type,
-            &benchmark_commands.primer_command,
-            &logger,
-        )?;
+        logger.log("---------------------------------------------------------")?;
+        logger.log(" Running Primer")?;
+        logger.log("---------------------------------------------------------")?;
+        self.run_benchmark(&orchestration, &benchmark_commands.primer_command, &logger)?;
+        logger.log("---------------------------------------------------------")?;
+        logger.log(" Running Warmup")?;
+        logger.log("---------------------------------------------------------")?;
+        self.run_benchmark(&orchestration, &benchmark_commands.warmup_command, &logger)?;
         for command in &benchmark_commands.benchmark_commands {
-            self.run_benchmark(&orchestration, &test_type, command, &logger)?;
+            logger.log("---------------------------------------------------------")?;
+            logger.log(format!(" {}", command.join(" ")))?;
+            logger.log("---------------------------------------------------------")?;
+            self.run_benchmark(&orchestration, command, &logger)?;
         }
+        logger.log(format!("Completed benchmarking: {}", test_type.0))?;
 
         // todo - write results?
 
@@ -262,8 +292,7 @@ impl Benchmarker {
     fn run_benchmark(
         &mut self,
         orchestration: &DockerOrchestration,
-        test_type: &(&String, &String),
-        command: &str,
+        command: &[String],
         logger: &Logger,
     ) -> ToolsetResult<()> {
         let container_id =
@@ -272,20 +301,20 @@ impl Benchmarker {
 
         connect_container_to_network(
             &self.docker_config,
-            &self.docker_config.server_docker_host,
+            &self.docker_config.client_docker_host,
             &orchestration.network_id,
             &container_ids,
         )?;
 
-        if let Ok(mut benchmarker) = self.benchmarker_container_id.try_lock() {
+        if let Ok(mut benchmarker) = self.benchmarker_container_id.lock() {
             benchmarker.requires_wait_to_stop = true;
             benchmarker.container_id = Some(container_ids.0.clone());
         }
         self.trip();
-        start_benchmarker_container(&self.docker_config, test_type, &container_ids.0, logger)?;
+        start_benchmarker_container(&self.docker_config, &container_ids.0, logger)?;
         // This signals that the benchmarker exited naturally on
         // its own, so we don't need to stop its container.
-        if let Ok(mut benchmarker) = self.benchmarker_container_id.try_lock() {
+        if let Ok(mut benchmarker) = self.benchmarker_container_id.lock() {
             benchmarker.requires_wait_to_stop = false;
             benchmarker.container_id = None;
         }
@@ -318,7 +347,7 @@ impl Benchmarker {
 
         // This DockerContainerIdFuture is different than the others
         // because it blocks until the verifier exits.
-        if let Ok(mut verifier) = self.verifier_container_id.try_lock() {
+        if let Ok(mut verifier) = self.verifier_container_id.lock() {
             verifier.requires_wait_to_stop = true;
             verifier.container_id = Some(container_ids.0.clone());
         }
@@ -333,7 +362,7 @@ impl Benchmarker {
         )?;
         // This signals that the verifier exited naturally on
         // its own, so we don't need to stop its container.
-        if let Ok(mut verifier) = self.verifier_container_id.try_lock() {
+        if let Ok(mut verifier) = self.verifier_container_id.lock() {
             verifier.requires_wait_to_stop = false;
             verifier.container_id = None;
         }
@@ -361,14 +390,14 @@ impl Benchmarker {
 
         connect_container_to_network(
             &self.docker_config,
-            &self.docker_config.server_docker_host,
+            &self.docker_config.client_docker_host,
             &orchestration.network_id,
             &container_ids,
         )?;
 
         // This DockerContainerIdFuture is different than the others
         // because it blocks until the verifier exits.
-        if let Ok(mut verifier) = self.verifier_container_id.try_lock() {
+        if let Ok(mut verifier) = self.verifier_container_id.lock() {
             verifier.requires_wait_to_stop = true;
             verifier.container_id = Some(container_ids.0.clone());
         }
@@ -381,7 +410,7 @@ impl Benchmarker {
         )?;
         // This signals that the verifier exited naturally on
         // its own, so we don't need to stop its container.
-        if let Ok(mut verifier) = self.verifier_container_id.try_lock() {
+        if let Ok(mut verifier) = self.verifier_container_id.lock() {
             verifier.requires_wait_to_stop = false;
             verifier.container_id = None;
         }
@@ -406,8 +435,15 @@ impl Benchmarker {
         };
 
         let database_container_id = self.start_database_if_necessary(test, &network_id)?;
-        let database_ports =
-            get_database_port_bindings(&self.docker_config, &database_container_id)?;
+        let mut database_ports = (None, None);
+        if let Some(container_id) = &database_container_id {
+            let ports = get_port_bindings_for_container(
+                &self.docker_config,
+                &self.docker_config.database_docker_host,
+                container_id,
+            )?;
+            database_ports = (Some(ports.0), Some(ports.1));
+        }
 
         let image_id = build_image(&self.docker_config, project, test, logger)?;
 
@@ -428,7 +464,7 @@ impl Benchmarker {
             &container_ids,
         )?;
 
-        if let Ok(mut application_container_id) = self.application_container_id.try_lock() {
+        if let Ok(mut application_container_id) = self.application_container_id.lock() {
             application_container_id.requires_wait_to_stop = true;
         }
 
@@ -440,24 +476,17 @@ impl Benchmarker {
             logger,
         )?;
 
-        if let Ok(mut application_container_id) = self.application_container_id.try_lock() {
+        if let Ok(mut application_container_id) = self.application_container_id.lock() {
             application_container_id.container_id = Some(container_ids.0.clone());
         }
 
         let host_ports = get_port_bindings_for_container(
             &self.docker_config,
             &self.docker_config.server_docker_host,
-            &container_ids,
+            &container_ids.0,
         )?;
 
-        if let Err(e) = self.wait_until_accepting_requests(&container_ids, &host_ports.0, test) {
-            self.trip();
-            return Err(stop_containers_because_of_error(
-                &self.docker_config,
-                &container_ids,
-                e,
-            ));
-        };
+        self.wait_until_accepting_requests(&container_ids, &host_ports.0, test)?;
 
         Ok(DockerOrchestration {
             network_id,
@@ -544,7 +573,7 @@ impl Benchmarker {
             let mut logger = Logger::with_prefix(&database);
             logger.quiet = true;
 
-            if let Ok(mut database_container_id) = self.database_container_id.try_lock() {
+            if let Ok(mut database_container_id) = self.database_container_id.lock() {
                 database_container_id.requires_wait_to_stop = true;
             }
 
@@ -556,7 +585,7 @@ impl Benchmarker {
                 &logger,
             )?;
 
-            if let Ok(mut database_container_id) = self.database_container_id.try_lock() {
+            if let Ok(mut database_container_id) = self.database_container_id.lock() {
                 database_container_id.container_id = Some(container_ids.0.clone());
             }
 
