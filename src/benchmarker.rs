@@ -9,6 +9,7 @@ use crate::docker::container::{
 };
 use crate::docker::docker_config::DockerConfig;
 use crate::docker::image::build_image;
+use crate::docker::listener::benchmarker::BenchmarkResults;
 use crate::docker::listener::simple::Simple;
 use crate::docker::network::{connect_container_to_network, create_network};
 use crate::docker::{
@@ -140,6 +141,7 @@ impl Benchmarker {
                 match self.start_test_orchestration(project, test, &logger) {
                     Ok(orchestration) => {
                         for test_type in &test.urls {
+                            logger.log(format!("Benchmarking: {}", test_type.0))?;
                             if self
                                 .run_benchmarks(&orchestration, &test_type, &logger)
                                 .is_err()
@@ -147,13 +149,14 @@ impl Benchmarker {
                                 // At present, we purposefully do not bubble this error
                                 // up because there may be more tests to benchmark.
                             }
+                            logger.log(format!("Completed benchmarking: {}", test_type.0))?;
                         }
                     }
-                    Err(_) => {
+                    Err(e) => {
                         // todo - we're swallowing errors here... probably bad.
                         //  That said, we don't want to panic; the next test
                         //  may succeed.
-                        self.stop_containers()?;
+                        dbg!(e);
                     }
                 }
 
@@ -254,47 +257,55 @@ impl Benchmarker {
     // PRIVATES
     //
 
-    ///
-    ///
+    /// Runs the benchmarks for a given `DockerOrchestration` and `test_type`.
     fn run_benchmarks(
         &mut self,
         orchestration: &DockerOrchestration,
         test_type: &(&String, &String),
         logger: &Logger,
     ) -> ToolsetResult<()> {
-        logger.log(format!("Benchmarking: {}", test_type.0))?;
         let mut logger = logger.clone();
         logger.set_log_file(&format!("{}.txt", test_type.0));
         logger.quiet = true;
         let benchmark_commands = self.run_command_retrieval(&orchestration, &test_type, &logger)?;
+
         logger.log("---------------------------------------------------------")?;
         logger.log(" Running Primer")?;
+        logger.log(format!(
+            "   {}",
+            &benchmark_commands.primer_command.join(" ")
+        ))?;
         logger.log("---------------------------------------------------------")?;
         self.run_benchmark(&orchestration, &benchmark_commands.primer_command, &logger)?;
+
         logger.log("---------------------------------------------------------")?;
         logger.log(" Running Warmup")?;
+        logger.log(format!(
+            "   {}",
+            &benchmark_commands.warmup_command.join(" ")
+        ))?;
         logger.log("---------------------------------------------------------")?;
         self.run_benchmark(&orchestration, &benchmark_commands.warmup_command, &logger)?;
+
         for command in &benchmark_commands.benchmark_commands {
             logger.log("---------------------------------------------------------")?;
             logger.log(format!(" {}", command.join(" ")))?;
             logger.log("---------------------------------------------------------")?;
-            self.run_benchmark(&orchestration, command, &logger)?;
-        }
-        logger.log(format!("Completed benchmarking: {}", test_type.0))?;
+            let _benchmarker_results = self.run_benchmark(&orchestration, command, &logger)?;
 
-        // todo - write results?
+            // todo - write results to `results.json`
+        }
 
         Ok(())
     }
 
-    /// Runs the benchmarker container against the given test orchestration.
+    /// Runs the benchmarker container against the given `DockerOrchestration`.
     fn run_benchmark(
         &mut self,
         orchestration: &DockerOrchestration,
         command: &[String],
         logger: &Logger,
-    ) -> ToolsetResult<()> {
+    ) -> ToolsetResult<BenchmarkResults> {
         let container_id =
             create_benchmarker_container(&self.docker_config, orchestration, command)?;
         let container_ids = (container_id, None);
@@ -311,7 +322,8 @@ impl Benchmarker {
             benchmarker.container_id = Some(container_ids.0.clone());
         }
         self.trip();
-        start_benchmarker_container(&self.docker_config, &container_ids.0, logger)?;
+        let benchmark_results =
+            start_benchmarker_container(&self.docker_config, &container_ids.0, logger)?;
         // This signals that the benchmarker exited naturally on
         // its own, so we don't need to stop its container.
         if let Ok(mut benchmarker) = self.benchmarker_container_id.lock() {
@@ -319,7 +331,7 @@ impl Benchmarker {
             benchmarker.container_id = None;
         }
 
-        Ok(())
+        Ok(benchmark_results)
     }
 
     /// Runs the verifier against the given test orchestration and returns the

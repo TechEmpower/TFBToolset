@@ -47,4 +47,7 @@ pub enum ToolsetError {
 
     #[error("Failed to retrieve benchmark commands")]
     FailedBenchmarkCommandRetrievalError,
+
+    #[error("Failed to parse benchmark results")]
+    BenchmarkDataParseError,
 }

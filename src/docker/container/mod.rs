@@ -3,7 +3,7 @@ use crate::config::{Project, Test};
 use crate::docker::docker_config::DockerConfig;
 use crate::docker::listener::application::Application;
 use crate::docker::listener::benchmark_command_listener::BenchmarkCommandListener;
-use crate::docker::listener::benchmarker::Benchmarker;
+use crate::docker::listener::benchmarker::{BenchmarkResults, Benchmarker};
 use crate::docker::listener::build_container::BuildContainer;
 use crate::docker::listener::simple::Simple;
 use crate::docker::listener::verifier::Verifier;
@@ -273,7 +273,7 @@ pub fn start_benchmarker_container(
     docker_config: &DockerConfig,
     container_id: &str,
     logger: &Logger,
-) -> ToolsetResult<()> {
+) -> ToolsetResult<BenchmarkResults> {
     dockurl::container::start_container(
         container_id,
         &docker_config.client_docker_host,
@@ -286,14 +286,14 @@ pub fn start_benchmarker_container(
         docker_config.use_unix_socket,
         Simple::new(),
     )?;
-    get_container_logs(
+    let benchmarker = get_container_logs(
         container_id,
         &docker_config.client_docker_host,
         docker_config.use_unix_socket,
         Benchmarker::new(logger),
     )?;
-    // todo - impl benchmarker
-    Ok(())
+
+    benchmarker.parse_wrk_output()
 }
 
 /// Starts the verification container, captures its stdout/stderr, parses any
@@ -331,25 +331,31 @@ pub fn stop_docker_container_future(
     docker_config: &DockerConfig,
     container: &Arc<Mutex<DockerContainerIdFuture>>,
 ) {
-    let mut poll = Poll::Pending;
-    while poll == Poll::Pending {
-        if let Ok(container) = container.lock() {
-            poll = container.poll();
-            if poll == Poll::Pending {
-                thread::sleep(Duration::from_secs(1));
+    let mut requires_wait_to_stop = false;
+    if let Ok(container) = container.lock() {
+        requires_wait_to_stop = container.requires_wait_to_stop;
+    }
+    if requires_wait_to_stop {
+        let mut poll = Poll::Pending;
+        while poll == Poll::Pending {
+            if let Ok(container) = container.lock() {
+                poll = container.poll();
+                if poll == Poll::Pending {
+                    thread::sleep(Duration::from_secs(1));
+                }
             }
         }
-    }
-    if let Ok(mut container) = container.lock() {
-        if let Some(container_id) = &container.container_id {
-            kill_container(
-                container_id,
-                &container.docker_host,
-                docker_config.use_unix_socket,
-                Simple::new(),
-            )
-            .unwrap_or(());
-            container.container_id = None;
+        if let Ok(mut container) = container.lock() {
+            if let Some(container_id) = &container.container_id {
+                kill_container(
+                    container_id,
+                    &container.docker_host,
+                    docker_config.use_unix_socket,
+                    Simple::new(),
+                )
+                .unwrap_or(());
+                container.container_id = None;
+            }
         }
     }
 }
