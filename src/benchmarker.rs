@@ -11,6 +11,7 @@ use crate::docker::docker_config::DockerConfig;
 use crate::docker::image::build_image;
 use crate::docker::listener::benchmarker::BenchmarkResults;
 use crate::docker::listener::simple::Simple;
+use crate::docker::listener::verifier::Error;
 use crate::docker::network::{connect_container_to_network, create_network};
 use crate::docker::{
     BenchmarkCommands, DockerContainerIdFuture, DockerOrchestration, Verification,
@@ -19,13 +20,14 @@ use crate::error::ToolsetError::{NoResponseFromDockerContainerError, Verificatio
 use crate::error::ToolsetResult;
 use crate::io::{report_verifications, Logger};
 use crate::metadata;
+use crate::results::{BenchmarkData, Results};
 use colored::Colorize;
 use curl::easy::Easy2;
 use dockurl::container::stop_container;
 use dockurl::network::NetworkMode;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{thread, time};
 
 pub mod modes {
@@ -131,6 +133,7 @@ impl Benchmarker {
     /// benchmarking completes, the results are parsed and stored in the
     /// results directory for this benchmark.
     pub fn benchmark(&mut self) -> ToolsetResult<()> {
+        let mut benchmark_results = Results::new(&self.docker_config);
         let logger = self.docker_config.logger.clone();
         let projects = &self.projects.clone();
         for project in projects {
@@ -142,28 +145,81 @@ impl Benchmarker {
                     Ok(orchestration) => {
                         for test_type in &test.urls {
                             logger.log(format!("Benchmarking: {}", test_type.0))?;
-                            if self
-                                .run_benchmarks(&orchestration, &test_type, &logger)
-                                .is_err()
-                            {
-                                // At present, we purposefully do not bubble this error
-                                // up because there may be more tests to benchmark.
+                            match self.run_benchmarks(&orchestration, &test_type, &logger) {
+                                Ok(results) => {
+                                    for result in results {
+                                        if benchmark_results.raw_data.get(test_type.0).is_none() {
+                                            benchmark_results
+                                                .raw_data
+                                                .insert(test_type.0.clone(), Vec::default());
+                                        }
+                                        if let Some(test_type) =
+                                            benchmark_results.raw_data.get_mut(test_type.0)
+                                        {
+                                            test_type.push(BenchmarkData {
+                                                latency_avg: result.thread_stats.latency.average,
+                                                latency_max: result.thread_stats.latency.max,
+                                                latency_stdev: result
+                                                    .thread_stats
+                                                    .latency
+                                                    .standard_deviation,
+                                                total_requests: format!(
+                                                    "{}",
+                                                    result.requests_per_second
+                                                ),
+                                                start_time: result.start_time,
+                                                end_time: result.end_time,
+                                            });
+                                        }
+                                    }
+                                    if benchmark_results.succeeded.get(test_type.0).is_none() {
+                                        benchmark_results
+                                            .succeeded
+                                            .insert(test_type.0.clone(), Vec::default());
+                                    }
+                                    if let Some(test_type) =
+                                        benchmark_results.succeeded.get_mut(test_type.0)
+                                    {
+                                        test_type.push(test.get_name());
+                                    }
+                                }
+                                Err(_) => {
+                                    if benchmark_results.failed.get(test_type.0).is_none() {
+                                        benchmark_results
+                                            .failed
+                                            .insert(test_type.0.clone(), Vec::default());
+                                    }
+                                    if let Some(test_type) =
+                                        benchmark_results.failed.get_mut(test_type.0)
+                                    {
+                                        test_type.push(test.get_name());
+                                    }
+                                }
                             }
+                            benchmark_results.completed.insert(
+                                test.get_name(),
+                                SystemTime::now()
+                                    .duration_since(UNIX_EPOCH)
+                                    .unwrap()
+                                    .as_millis()
+                                    .to_string(),
+                            );
                             logger.log(format!("Completed benchmarking: {}", test_type.0))?;
                         }
                     }
                     Err(e) => {
-                        // todo - we're swallowing errors here... probably bad.
-                        //  That said, we don't want to panic; the next test
-                        //  may succeed.
+                        // fixme - we don't have a test_type, so can't push
+                        //  into the `benchmark_results.failed` map.
                         dbg!(e);
                     }
                 }
 
                 self.trip();
-                self.stop_containers()?;
+                self.stop_containers();
             }
         }
+
+        dbg!(benchmark_results);
 
         Ok(())
     }
@@ -193,7 +249,7 @@ impl Benchmarker {
                         }
                     }
                     Err(e) => {
-                        self.stop_containers()?;
+                        self.stop_containers();
                         return Err(e);
                     }
                 }
@@ -218,28 +274,55 @@ impl Benchmarker {
                 match self.start_test_orchestration(project, test, &logger) {
                     Ok(orchestration) => {
                         for test_type in &test.urls {
-                            let verification = self.run_verification(
+                            self.trip();
+                            match self.run_verification(
                                 &project,
                                 &test,
                                 &orchestration,
                                 &test_type,
                                 &logger,
-                            )?;
-                            succeeded &= verification.errors.is_empty();
-                            verifications.push(verification);
+                            ) {
+                                Ok(verification) => {
+                                    succeeded &= verification.errors.is_empty();
+                                    verifications.push(verification);
+                                }
+                                Err(e) => {
+                                    verifications.push(Verification {
+                                        framework_name: project.framework.get_name(),
+                                        test_name: test.get_name(),
+                                        type_name: String::default(),
+                                        warnings: Vec::default(),
+                                        errors: vec![Error {
+                                            message: format!("{:?}", e),
+                                            short_message: "Failed to Verify".to_string(),
+                                        }],
+                                    });
+                                    succeeded = false;
+                                    self.trip();
+                                    self.stop_containers();
+                                }
+                            }
                         }
                     }
-                    Err(_) => {
-                        // todo - we're swallowing errors here... probably bad.
-                        //  That said, we don't want to panic; the next test
-                        //  may succeed.
+                    Err(e) => {
+                        verifications.push(Verification {
+                            framework_name: project.framework.get_name(),
+                            test_name: test.get_name(),
+                            type_name: String::default(),
+                            warnings: Vec::default(),
+                            errors: vec![Error {
+                                message: format!("{:?}", e),
+                                short_message: "Failed to Start".to_string(),
+                            }],
+                        });
                         succeeded = false;
-                        self.stop_containers()?;
+                        self.trip();
+                        self.stop_containers();
                     }
                 };
 
                 self.trip();
-                self.stop_containers()?;
+                self.stop_containers();
             }
         }
 
@@ -263,7 +346,8 @@ impl Benchmarker {
         orchestration: &DockerOrchestration,
         test_type: &(&String, &String),
         logger: &Logger,
-    ) -> ToolsetResult<()> {
+    ) -> ToolsetResult<Vec<BenchmarkResults>> {
+        let mut results = Vec::default();
         let mut logger = logger.clone();
         logger.set_log_file(&format!("{}.txt", test_type.0));
         logger.quiet = true;
@@ -291,12 +375,11 @@ impl Benchmarker {
             logger.log("---------------------------------------------------------")?;
             logger.log(format!(" {}", command.join(" ")))?;
             logger.log("---------------------------------------------------------")?;
-            let _benchmarker_results = self.run_benchmark(&orchestration, command, &logger)?;
 
-            // todo - write results to `results.json`
+            results.push(self.run_benchmark(&orchestration, command, &logger)?);
         }
 
-        Ok(())
+        Ok(results)
     }
 
     /// Runs the benchmarker container against the given `DockerOrchestration`.
@@ -534,13 +617,11 @@ impl Benchmarker {
 
     /// Convenience method for stopping all running containers and popping them
     /// off the running containers vec.
-    fn stop_containers(&mut self) -> ToolsetResult<()> {
+    fn stop_containers(&mut self) {
         stop_docker_container_future(&self.docker_config, &self.verifier_container_id);
         stop_docker_container_future(&self.docker_config, &self.benchmarker_container_id);
         stop_docker_container_future(&self.docker_config, &self.application_container_id);
         stop_docker_container_future(&self.docker_config, &self.database_container_id);
-
-        Ok(())
     }
 
     /// Starts the database for the given `Test` if one is specified as being

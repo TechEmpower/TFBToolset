@@ -15,6 +15,9 @@ pub struct DockerConfig {
     pub network_mode: dockurl::network::NetworkMode,
     pub concurrency_levels: String,
     pub pipeline_concurrency_levels: String,
+    pub query_levels: String,
+    pub cached_query_levels: String,
+    pub duration: usize,
     pub logger: Logger,
 }
 impl DockerConfig {
@@ -56,6 +59,8 @@ impl DockerConfig {
             options::network_modes::HOST => Host,
             _ => Bridge,
         };
+        let duration =
+            str::parse::<usize>(matches.value_of(options::args::DURATION).unwrap()).unwrap();
         let concurrency_levels = matches
             .values_of(options::args::CONCURRENCY_LEVELS)
             .unwrap()
@@ -64,6 +69,19 @@ impl DockerConfig {
             .join(",");
         let pipeline_concurrency_levels = matches
             .values_of(options::args::PIPELINE_CONCURRENCY_LEVELS)
+            .unwrap()
+            .map(|item| item.to_string())
+            .collect::<Vec<String>>()
+            .join(",");
+
+        let query_levels = matches
+            .values_of(options::args::QUERY_LEVELS)
+            .unwrap()
+            .map(|item| item.to_string())
+            .collect::<Vec<String>>()
+            .join(",");
+        let cached_query_levels = matches
+            .values_of(options::args::CACHED_QUERY_LEVELS)
             .unwrap()
             .map(|item| item.to_string())
             .collect::<Vec<String>>()
@@ -95,6 +113,9 @@ impl DockerConfig {
             concurrency_levels,
             pipeline_concurrency_levels,
             logger,
+            query_levels, // todo - we don't use these correctly
+            cached_query_levels,
+            duration,
         }
     }
 }
