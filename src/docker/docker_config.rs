@@ -17,7 +17,7 @@ pub struct DockerConfig {
     pub pipeline_concurrency_levels: String,
     pub query_levels: String,
     pub cached_query_levels: String,
-    pub duration: usize,
+    pub duration: u32,
     pub logger: Logger,
 }
 impl DockerConfig {
@@ -60,7 +60,7 @@ impl DockerConfig {
             _ => Bridge,
         };
         let duration =
-            str::parse::<usize>(matches.value_of(options::args::DURATION).unwrap()).unwrap();
+            str::parse::<u32>(matches.value_of(options::args::DURATION).unwrap()).unwrap();
         let concurrency_levels = matches
             .values_of(options::args::CONCURRENCY_LEVELS)
             .unwrap()

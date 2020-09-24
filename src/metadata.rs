@@ -86,6 +86,7 @@ pub fn list_projects_by_test_name(
     tfb_path.push("frameworks/*/*/config.toml");
     for path in glob(tfb_path.to_str().unwrap()).unwrap() {
         let path_buf: &PathBuf = &path.unwrap();
+        let project_name = config::get_project_name_by_config_file(&path_buf)?;
         let framework = config::get_framework_by_config_file(&path_buf)?;
         let mut tests = Vec::new();
         let language = config::get_language_by_config_file(&framework, &path_buf)?;
@@ -101,6 +102,7 @@ pub fn list_projects_by_test_name(
         }
         if !tests.is_empty() {
             projects.push(Project {
+                name: project_name,
                 framework,
                 tests,
                 language,
@@ -191,7 +193,8 @@ fn get_test_implementations_by_path(path: &PathBuf) -> ToolsetResult<Vec<Test>> 
 #[cfg(test)]
 mod tests {
     use crate::metadata::{
-        list_all_frameworks, list_all_tests, list_tests_by_tag, list_tests_for_framework,
+        list_all_frameworks, list_all_projects, list_all_tests, list_tests_by_tag,
+        list_tests_for_framework,
     };
 
     #[test]
@@ -206,6 +209,15 @@ mod tests {
     #[test]
     fn it_can_list_all_tests() {
         let passed = match list_all_tests() {
+            Ok(_) => true,
+            _ => false,
+        };
+        assert!(passed);
+    }
+
+    #[test]
+    fn it_can_list_all_projects() {
+        let passed = match list_all_projects() {
             Ok(_) => true,
             _ => false,
         };

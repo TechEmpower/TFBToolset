@@ -68,8 +68,8 @@ impl Benchmarker {
             let mut percentile_99 = String::default();
             for line in data.lines() {
                 if let Some(captures) = THREADS_CONNECTIONS.captures(line) {
-                    threads = str::parse::<usize>(captures.get(1).unwrap().as_str()).unwrap();
-                    connections = str::parse::<usize>(captures.get(2).unwrap().as_str()).unwrap();
+                    threads = str::parse::<u32>(captures.get(1).unwrap().as_str()).unwrap();
+                    connections = str::parse::<u32>(captures.get(2).unwrap().as_str()).unwrap();
                 }
                 if let Some(captures) = &LATENCY.captures(line) {
                     latency_average = captures.get(2).unwrap().as_str().to_string();
@@ -84,23 +84,22 @@ impl Benchmarker {
                     req_sec_plus_minus = captures.get(8).unwrap().as_str().to_string();
                 }
                 if let Some(captures) = TOTAL_REQUESTS.captures(line) {
-                    total_requests =
-                        str::parse::<usize>(captures.get(1).unwrap().as_str()).unwrap();
+                    total_requests = str::parse::<u32>(captures.get(1).unwrap().as_str()).unwrap();
                     duration = str::parse::<f32>(captures.get(2).unwrap().as_str()).unwrap();
                     data_read = captures.get(3).unwrap().as_str().to_string();
                 }
                 if let Some(captures) = SOCKET_ERRORS.captures(line) {
                     // todo - test this; Gemini exercise these.
                     socket_errors = Some(SocketErrors {
-                        connect: str::parse::<usize>(captures.get(1).unwrap().as_str()).unwrap(),
-                        read: str::parse::<usize>(captures.get(2).unwrap().as_str()).unwrap(),
-                        write: str::parse::<usize>(captures.get(3).unwrap().as_str()).unwrap(),
-                        timeout: str::parse::<usize>(captures.get(4).unwrap().as_str()).unwrap(),
+                        connect: str::parse::<u32>(captures.get(1).unwrap().as_str()).unwrap(),
+                        read: str::parse::<u32>(captures.get(2).unwrap().as_str()).unwrap(),
+                        write: str::parse::<u32>(captures.get(3).unwrap().as_str()).unwrap(),
+                        timeout: str::parse::<u32>(captures.get(4).unwrap().as_str()).unwrap(),
                     });
                 }
                 if let Some(captures) = NON_2XX_3XX.captures(line) {
                     non_2xx_3xx =
-                        Some(str::parse::<usize>(captures.get(1).unwrap().as_str()).unwrap());
+                        Some(str::parse::<u32>(captures.get(1).unwrap().as_str()).unwrap());
                 }
                 if let Some(captures) = REQUESTS_PER_SECOND.captures(line) {
                     requests_per_second =
@@ -180,17 +179,17 @@ impl Handler for Benchmarker {
 pub struct BenchmarkResults {
     pub start_time: u128,
     pub end_time: u128,
-    pub threads: usize,
-    pub connections: usize,
+    pub threads: u32,
+    pub connections: u32,
     pub thread_stats: ThreadStats,
     pub latency_distribution: LatencyDistribution,
-    pub total_requests: usize,
+    pub total_requests: u32,
     pub duration: f32,
     pub data_read: String,
     pub socket_errors: Option<SocketErrors>,
     pub requests_per_second: f32,
     pub transfer_per_second: String,
-    pub non_2xx_3xx: Option<usize>,
+    pub non_2xx_3xx: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -225,8 +224,8 @@ pub struct LatencyDistribution {
 
 #[derive(Debug)]
 pub struct SocketErrors {
-    pub connect: usize,
-    pub read: usize,
-    pub write: usize,
-    pub timeout: usize,
+    pub connect: u32,
+    pub read: u32,
+    pub write: u32,
+    pub timeout: u32,
 }

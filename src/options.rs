@@ -250,7 +250,7 @@ pub fn parse() -> App<'static> {
                 .long("cached-query-levels")
                 .takes_value(true)
                 .multiple(true)
-                .default_values(&["1", "5", "10", "15", "20"])
+                .default_values(&["1", "10", "20", "50", "100"])
         )
         // Network options
         .arg(

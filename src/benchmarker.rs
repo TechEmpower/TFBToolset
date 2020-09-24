@@ -1,6 +1,6 @@
 use clap::ArgMatches;
 
-use crate::config::{Named, Project, Test};
+use crate::config::{Framework, Named, Project, Test};
 use crate::docker::container::{
     create_benchmarker_container, create_container, create_verifier_container,
     get_port_bindings_for_container, start_benchmark_command_retrieval_container,
@@ -17,7 +17,7 @@ use crate::docker::{
     BenchmarkCommands, DockerContainerIdFuture, DockerOrchestration, Verification,
 };
 use crate::error::ToolsetError::{NoResponseFromDockerContainerError, VerificationFailedException};
-use crate::error::ToolsetResult;
+use crate::error::{ToolsetError, ToolsetResult};
 use crate::io::{report_verifications, Logger};
 use crate::metadata;
 use crate::results::{BenchmarkData, Results};
@@ -25,6 +25,7 @@ use colored::Colorize;
 use curl::easy::Easy2;
 use dockurl::container::stop_container;
 use dockurl::network::NetworkMode;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -133,7 +134,7 @@ impl Benchmarker {
     /// benchmarking completes, the results are parsed and stored in the
     /// results directory for this benchmark.
     pub fn benchmark(&mut self) -> ToolsetResult<()> {
-        let mut benchmark_results = Results::new(&self.docker_config);
+        let mut benchmark_results = Results::new(&self.docker_config)?;
         let logger = self.docker_config.logger.clone();
         let projects = &self.projects.clone();
         for project in projects {
@@ -146,55 +147,20 @@ impl Benchmarker {
                         for test_type in &test.urls {
                             logger.log(format!("Benchmarking: {}", test_type.0))?;
                             match self.run_benchmarks(&orchestration, &test_type, &logger) {
-                                Ok(results) => {
-                                    for result in results {
-                                        if benchmark_results.raw_data.get(test_type.0).is_none() {
-                                            benchmark_results
-                                                .raw_data
-                                                .insert(test_type.0.clone(), Vec::default());
-                                        }
-                                        if let Some(test_type) =
-                                            benchmark_results.raw_data.get_mut(test_type.0)
-                                        {
-                                            test_type.push(BenchmarkData {
-                                                latency_avg: result.thread_stats.latency.average,
-                                                latency_max: result.thread_stats.latency.max,
-                                                latency_stdev: result
-                                                    .thread_stats
-                                                    .latency
-                                                    .standard_deviation,
-                                                total_requests: format!(
-                                                    "{}",
-                                                    result.requests_per_second
-                                                ),
-                                                start_time: result.start_time,
-                                                end_time: result.end_time,
-                                            });
-                                        }
-                                    }
-                                    if benchmark_results.succeeded.get(test_type.0).is_none() {
-                                        benchmark_results
-                                            .succeeded
-                                            .insert(test_type.0.clone(), Vec::default());
-                                    }
-                                    if let Some(test_type) =
-                                        benchmark_results.succeeded.get_mut(test_type.0)
-                                    {
-                                        test_type.push(test.get_name());
-                                    }
-                                }
-                                Err(_) => {
-                                    if benchmark_results.failed.get(test_type.0).is_none() {
-                                        benchmark_results
-                                            .failed
-                                            .insert(test_type.0.clone(), Vec::default());
-                                    }
-                                    if let Some(test_type) =
-                                        benchmark_results.failed.get_mut(test_type.0)
-                                    {
-                                        test_type.push(test.get_name());
-                                    }
-                                }
+                                Ok(results) => self.report_benchmark_success(
+                                    &mut benchmark_results,
+                                    results,
+                                    &project.framework,
+                                    test_type.0,
+                                    &logger,
+                                ),
+                                Err(e) => self.report_benchmark_error(
+                                    &mut benchmark_results,
+                                    &test,
+                                    test_type.0,
+                                    &e,
+                                    &logger,
+                                ),
                             }
                             benchmark_results.completed.insert(
                                 test.get_name(),
@@ -208,9 +174,18 @@ impl Benchmarker {
                         }
                     }
                     Err(e) => {
-                        // fixme - we don't have a test_type, so can't push
-                        //  into the `benchmark_results.failed` map.
-                        dbg!(e);
+                        // We could not start this implementation's docker
+                        // container(s); all of its test implementations must
+                        // fail.
+                        for test_type in &test.urls {
+                            self.report_benchmark_error(
+                                &mut benchmark_results,
+                                &test,
+                                test_type.0,
+                                &e,
+                                &logger,
+                            );
+                        }
                     }
                 }
 
@@ -219,7 +194,7 @@ impl Benchmarker {
             }
         }
 
-        dbg!(benchmark_results);
+        eprintln!("{}", serde_json::to_string(&benchmark_results).unwrap());
 
         Ok(())
     }
@@ -415,6 +390,72 @@ impl Benchmarker {
         }
 
         Ok(benchmark_results)
+    }
+
+    /// Reports the successful benchmark of a given `framework` / `test_type`
+    /// via `results.json` output.
+    fn report_benchmark_success(
+        &self,
+        benchmark_results: &mut Results,
+        results: Vec<BenchmarkResults>,
+        framework: &Framework,
+        test_type: &str,
+        _logger: &Logger,
+    ) {
+        for result in results {
+            if benchmark_results.raw_data.get(test_type).is_none() {
+                benchmark_results
+                    .raw_data
+                    .insert(test_type.to_string(), HashMap::default());
+            }
+            if let Some(test_type) = benchmark_results.raw_data.get_mut(test_type) {
+                if test_type
+                    .get(&framework.get_name().to_lowercase())
+                    .is_none()
+                {
+                    test_type.insert(framework.get_name().to_lowercase(), Vec::default());
+                }
+
+                if let Some(results) = test_type.get_mut(&framework.get_name().to_lowercase()) {
+                    results.push(BenchmarkData {
+                        latency_avg: result.thread_stats.latency.average,
+                        latency_max: result.thread_stats.latency.max,
+                        latency_stdev: result.thread_stats.latency.standard_deviation,
+                        total_requests: result.total_requests,
+                        start_time: result.start_time,
+                        end_time: result.end_time,
+                    });
+                }
+            }
+        }
+        if benchmark_results.succeeded.get(test_type).is_none() {
+            benchmark_results
+                .succeeded
+                .insert(test_type.to_string(), Vec::default());
+        }
+        if let Some(test_type) = benchmark_results.succeeded.get_mut(test_type) {
+            test_type.push(framework.get_name().to_lowercase());
+        }
+    }
+
+    /// Reports the unsuccessful benchmark of a given `test` / `test_type` via
+    /// `results.json` output.
+    fn report_benchmark_error(
+        &self,
+        benchmark_results: &mut Results,
+        test: &Test,
+        test_type: &str,
+        _error: &ToolsetError,
+        _logger: &Logger,
+    ) {
+        if benchmark_results.failed.get(test_type).is_none() {
+            benchmark_results
+                .failed
+                .insert(test_type.to_string(), Vec::default());
+        }
+        if let Some(test_type) = benchmark_results.failed.get_mut(test_type) {
+            test_type.push(test.get_name());
+        }
     }
 
     /// Runs the verifier against the given test orchestration and returns the

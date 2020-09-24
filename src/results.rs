@@ -1,4 +1,7 @@
+use crate::config::Named;
 use crate::docker::docker_config::DockerConfig;
+use crate::error::ToolsetResult;
+use crate::metadata::list_all_projects;
 use rand::Rng;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -6,23 +9,25 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 #[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct Results {
     pub uuid: String,
     pub name: String,
     pub start_time: u128,
     pub completion_time: u128,
-    pub duration: usize,
+    pub duration: u32,
     pub test_metadata: Vec<MetaData>,
     pub environment_description: String,
     pub git: Git,
-    pub cached_query_intervals: Vec<usize>,
-    pub concurrency_levels: Vec<usize>,
-    pub pipeline_concurrency_levels: Vec<usize>,
+    pub query_intervals: Vec<u32>,
+    pub cached_query_intervals: Vec<u32>,
+    pub concurrency_levels: Vec<u32>,
+    pub pipeline_concurrency_levels: Vec<u32>,
     pub frameworks: Vec<String>,
     // Holdover from legacy, this should be improved in the future but the idea
     // is to support a structure like:
     // `{ "json": { "gemini": { ... } } }`
-    pub raw_data: HashMap<String, Vec<BenchmarkData>>,
+    pub raw_data: HashMap<String, HashMap<String, Vec<BenchmarkData>>>,
     // Holdover from legacy, this should be improved in the future but the idea
     // is to support a structure like:
     // `{ "gemini": { "json": "passed" } }`
@@ -40,9 +45,32 @@ pub struct Results {
     pub completed: HashMap<String, String>,
 }
 impl Results {
-    pub fn new(docker_config: &DockerConfig) -> Self {
+    pub fn new(docker_config: &DockerConfig) -> ToolsetResult<Self> {
         let mut results = Results::default();
 
+        results.test_metadata = Vec::default();
+        for project in list_all_projects()? {
+            for test in &project.tests {
+                results.test_metadata.push(MetaData {
+                    versus: test.versus.clone(),
+                    project_name: project.name.to_lowercase(),
+                    // Legacy - we no longer support display_name
+                    display_name: test.get_name(),
+                    name: test.get_name(),
+                    classification: test.classification.clone(),
+                    database: test.database.clone(),
+                    language: project.language.clone(),
+                    os: test.os.clone(),
+                    tags: test.tags.clone(),
+                    framework: project.framework.get_name(),
+                    webserver: test.webserver.clone(),
+                    orm: test.orm.clone(),
+                    platform: test.platform.clone(),
+                    database_os: test.database_os.clone(),
+                    approach: test.approach.clone(),
+                });
+            }
+        }
         let mut rng = rand::thread_rng();
         results.uuid = Uuid::from_u128(rng.gen::<u128>())
             .to_hyphenated()
@@ -53,34 +81,46 @@ impl Results {
             .unwrap()
             .as_millis();
         results.duration = docker_config.duration;
+        results.concurrency_levels = docker_config
+            .concurrency_levels
+            .split(',')
+            .map(|l| str::parse::<u32>(l).unwrap())
+            .collect();
         results.pipeline_concurrency_levels = docker_config
             .pipeline_concurrency_levels
             .split(',')
-            .map(|l| str::parse::<usize>(l).unwrap())
+            .map(|l| str::parse::<u32>(l).unwrap())
             .collect();
         results.cached_query_intervals = docker_config
             .cached_query_levels
             .split(',')
-            .map(|l| str::parse::<usize>(l).unwrap())
+            .map(|l| str::parse::<u32>(l).unwrap())
+            .collect();
+        results.query_intervals = docker_config
+            .query_levels
+            .split(',')
+            .map(|l| str::parse::<u32>(l).unwrap())
             .collect();
         results.environment_description = String::default(); // todo
         results.git = Git::default(); // todo
 
-        results
+        Ok(results)
     }
 }
 
 #[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct BenchmarkData {
     pub latency_avg: String,
     pub latency_max: String,
     pub latency_stdev: String,
-    pub total_requests: String,
+    pub total_requests: u32,
     pub start_time: u128,
     pub end_time: u128,
 }
 
 #[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct Git {
     pub commit_id: String,
     pub repository_url: String,
@@ -94,15 +134,18 @@ pub struct MetaData {
     pub display_name: String,
     pub name: String,
     pub classification: String,
-    pub database: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub database: Option<String>,
     pub language: String,
     pub os: String,
-    pub notes: String,
-    pub tags: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
     pub framework: String,
     pub webserver: String,
-    pub orm: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub orm: Option<String>,
     pub platform: String,
-    pub database_os: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub database_os: Option<String>,
     pub approach: String,
 }

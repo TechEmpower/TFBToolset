@@ -43,7 +43,6 @@ pub struct Test {
     pub os: String,
     pub database_os: Option<String>,
     pub database: Option<String>,
-    pub database_port: Option<u16>,
     pub versus: String,
     pub tags: Option<Vec<String>>,
     pub dockerfile: Option<String>,
@@ -70,6 +69,7 @@ impl Test {
 /// path to the config file from which it was built.
 #[derive(Clone, Debug)]
 pub struct Project {
+    pub name: String,
     pub language: String,
     pub framework: Framework,
     pub tests: Vec<Test>,
@@ -122,6 +122,18 @@ pub fn get_framework_by_config_file(file: &PathBuf) -> ToolsetResult<Framework> 
     let config: Config = toml::from_str(&contents)?;
 
     Ok(config.framework)
+}
+
+/// Parses the given `&PathBug` of a `config.toml` file and return the parent
+/// directory name as the project's name.
+pub fn get_project_name_by_config_file(path_buf: &PathBuf) -> ToolsetResult<String> {
+    let parent_dir = path_buf.parent().unwrap();
+    Ok(parent_dir
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string())
 }
 
 /// Parses the given `&PathBuf` of a `config.toml` file and returns the vector
