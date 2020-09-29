@@ -162,14 +162,8 @@ impl Benchmarker {
                                     &logger,
                                 ),
                             }
-                            benchmark_results.completed.insert(
-                                test.get_name(),
-                                SystemTime::now()
-                                    .duration_since(UNIX_EPOCH)
-                                    .unwrap()
-                                    .as_millis()
-                                    .to_string(),
-                            );
+
+                            logger.write_results(&benchmark_results)?;
                             logger.log(format!("Completed benchmarking: {}", test_type.0))?;
                         }
                     }
@@ -193,8 +187,6 @@ impl Benchmarker {
                 self.stop_containers();
             }
         }
-
-        eprintln!("{}", serde_json::to_string(&benchmark_results).unwrap());
 
         Ok(())
     }
@@ -376,8 +368,7 @@ impl Benchmarker {
         )?;
 
         if let Ok(mut benchmarker) = self.benchmarker_container_id.lock() {
-            benchmarker.requires_wait_to_stop = true;
-            benchmarker.container_id = Some(container_ids.0.clone());
+            benchmarker.register(&container_ids.0);
         }
         self.trip();
         let benchmark_results =
@@ -385,8 +376,7 @@ impl Benchmarker {
         // This signals that the benchmarker exited naturally on
         // its own, so we don't need to stop its container.
         if let Ok(mut benchmarker) = self.benchmarker_container_id.lock() {
-            benchmarker.requires_wait_to_stop = false;
-            benchmarker.container_id = None;
+            benchmarker.unregister();
         }
 
         Ok(benchmark_results)
@@ -436,6 +426,14 @@ impl Benchmarker {
         if let Some(test_type) = benchmark_results.succeeded.get_mut(test_type) {
             test_type.push(framework.get_name().to_lowercase());
         }
+        benchmark_results.completed.insert(
+            framework.get_name().to_lowercase(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+                .to_string(),
+        );
     }
 
     /// Reports the unsuccessful benchmark of a given `test` / `test_type` via
@@ -484,8 +482,7 @@ impl Benchmarker {
         // This DockerContainerIdFuture is different than the others
         // because it blocks until the verifier exits.
         if let Ok(mut verifier) = self.verifier_container_id.lock() {
-            verifier.requires_wait_to_stop = true;
-            verifier.container_id = Some(container_ids.0.clone());
+            verifier.register(&container_ids.0);
         }
         self.trip();
         let verification = start_verification_container(
@@ -499,8 +496,7 @@ impl Benchmarker {
         // This signals that the verifier exited naturally on
         // its own, so we don't need to stop its container.
         if let Ok(mut verifier) = self.verifier_container_id.lock() {
-            verifier.requires_wait_to_stop = false;
-            verifier.container_id = None;
+            verifier.unregister();
         }
 
         Ok(verification)
@@ -534,8 +530,7 @@ impl Benchmarker {
         // This DockerContainerIdFuture is different than the others
         // because it blocks until the verifier exits.
         if let Ok(mut verifier) = self.verifier_container_id.lock() {
-            verifier.requires_wait_to_stop = true;
-            verifier.container_id = Some(container_ids.0.clone());
+            verifier.register(&container_ids.0);
         }
         self.trip();
         let commands = start_benchmark_command_retrieval_container(
@@ -547,8 +542,7 @@ impl Benchmarker {
         // This signals that the verifier exited naturally on
         // its own, so we don't need to stop its container.
         if let Ok(mut verifier) = self.verifier_container_id.lock() {
-            verifier.requires_wait_to_stop = false;
-            verifier.container_id = None;
+            verifier.unregister();
         }
 
         Ok(commands)
@@ -601,7 +595,7 @@ impl Benchmarker {
         )?;
 
         if let Ok(mut application_container_id) = self.application_container_id.lock() {
-            application_container_id.requires_wait_to_stop = true;
+            application_container_id.register(&container_ids.0);
         }
 
         self.trip();
@@ -611,10 +605,6 @@ impl Benchmarker {
             &self.docker_config.server_docker_host,
             logger,
         )?;
-
-        if let Ok(mut application_container_id) = self.application_container_id.lock() {
-            application_container_id.container_id = Some(container_ids.0.clone());
-        }
 
         let host_ports = get_port_bindings_for_container(
             &self.docker_config,
@@ -708,7 +698,7 @@ impl Benchmarker {
             logger.quiet = true;
 
             if let Ok(mut database_container_id) = self.database_container_id.lock() {
-                database_container_id.requires_wait_to_stop = true;
+                database_container_id.register(&container_ids.0);
             }
 
             self.trip();
@@ -718,10 +708,6 @@ impl Benchmarker {
                 &self.docker_config.database_docker_host,
                 &logger,
             )?;
-
-            if let Ok(mut database_container_id) = self.database_container_id.lock() {
-                database_container_id.container_id = Some(container_ids.0.clone());
-            }
 
             return Ok(Some(container_ids.0));
         }

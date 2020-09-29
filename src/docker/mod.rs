@@ -41,10 +41,11 @@ pub struct BenchmarkCommands {
     pub benchmark_commands: Vec<Vec<String>>,
 }
 
+#[derive(Clone, Debug)]
 pub struct DockerContainerIdFuture {
-    pub requires_wait_to_stop: bool,
-    pub container_id: Option<String>,
-    pub docker_host: String,
+    requires_wait_to_stop: bool,
+    container_id: Option<String>,
+    docker_host: String,
 }
 impl DockerContainerIdFuture {
     pub fn new(docker_host: &str) -> Self {
@@ -53,6 +54,16 @@ impl DockerContainerIdFuture {
             container_id: None,
             docker_host: docker_host.to_string(),
         }
+    }
+
+    pub fn register(&mut self, container_id: &str) {
+        self.requires_wait_to_stop = true;
+        self.container_id = Some(container_id.to_string());
+    }
+
+    pub fn unregister(&mut self) {
+        self.requires_wait_to_stop = false;
+        self.container_id = None;
     }
 
     fn poll(&self) -> Poll<()> {

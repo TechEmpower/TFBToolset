@@ -3,6 +3,7 @@ use crate::docker::Verification;
 use crate::error::ToolsetError::InvalidFrameworkBenchmarksDirError;
 use crate::error::{ToolsetError, ToolsetResult};
 use crate::metadata;
+use crate::results::Results;
 use chrono::Utc;
 use colored::Colorize;
 use std::collections::HashMap;
@@ -19,6 +20,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone)]
 pub struct Logger {
     prefix: Option<String>,
+    results_dir: Option<PathBuf>,
     log_dir: Option<PathBuf>,
     log_file: Option<PathBuf>,
     pub quiet: bool,
@@ -32,6 +34,7 @@ impl Logger {
     pub fn default() -> Logger {
         Logger {
             prefix: None,
+            results_dir: None,
             log_dir: None,
             log_file: None,
             quiet: false,
@@ -44,6 +47,7 @@ impl Logger {
     pub fn with_prefix(prefix: &str) -> Logger {
         Logger {
             prefix: Some(prefix.to_string()),
+            results_dir: None,
             log_dir: None,
             log_file: None,
             quiet: false,
@@ -58,6 +62,7 @@ impl Logger {
 
         Logger {
             prefix: None,
+            results_dir: Some(log_dir.clone()),
             log_dir: Some(log_dir),
             log_file: None,
             quiet: false,
@@ -130,6 +135,29 @@ impl Logger {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Serializes and writes the given `results` to `results.json` in the root
+    /// of the current `results` directory.
+    pub fn write_results(&self, results: &Results) -> ToolsetResult<()> {
+        if let Some(results_dir) = &self.results_dir {
+            let mut results_file = results_dir.clone();
+            results_file.push("results.json");
+
+            if !results_file.exists() {
+                File::create(&results_file)?;
+            }
+
+            let mut file = OpenOptions::new()
+                .write(true)
+                .append(false)
+                .open(results_file)
+                .unwrap();
+            file.write_all(serde_json::to_string(results).unwrap().as_bytes())?;
+            file.write_all(&[b'\n'])?;
+        }
+
         Ok(())
     }
 

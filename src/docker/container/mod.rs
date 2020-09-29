@@ -354,7 +354,7 @@ pub fn stop_docker_container_future(
                     Simple::new(),
                 )
                 .unwrap_or(());
-                container.container_id = None;
+                container.unregister();
             }
         }
     }
