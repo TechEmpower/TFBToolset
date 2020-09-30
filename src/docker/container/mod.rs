@@ -120,7 +120,7 @@ pub fn create_verifier_container(
     test_type: &(&String, &String),
 ) -> ToolsetResult<String> {
     let mut options = Options::new();
-    options.image("tfb.verifier");
+    options.image("techempower/tfb.verifier");
     options.tty(true);
     options.add_env(
         "MODE",

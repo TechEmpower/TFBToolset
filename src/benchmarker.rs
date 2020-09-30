@@ -566,6 +566,8 @@ impl Benchmarker {
         test: &Test,
         logger: &Logger,
     ) -> ToolsetResult<DockerOrchestration> {
+        self.retrieve_verifier(&logger)?;
+
         let network_id = match &self.docker_config.network_mode {
             NetworkMode::Bridge => create_network(&self.docker_config)?,
             NetworkMode::Host => "host".to_string(),
@@ -789,5 +791,14 @@ impl Benchmarker {
                 }
             }
         }
+    }
+
+    /// Retrieves the published TFBVerifier.
+    fn retrieve_verifier(&self, logger: &Logger) -> ToolsetResult<()> {
+        logger.log("Pulling verifier; this may take some time.")?;
+        // todo - how should we version this?
+        pull_image(&self.docker_config, "techempower/tfb.verifier")?;
+
+        Ok(())
     }
 }
