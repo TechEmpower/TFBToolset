@@ -42,6 +42,9 @@ pub enum ToolsetError {
     #[error("Verification failed")]
     VerificationFailedException,
 
+    #[error("Application server container shut down after start")]
+    AppServerContainerShutDownError,
+
     #[error("Failed to inspect container for port mappings")]
     ContainerPortMappingInspectionError,
 

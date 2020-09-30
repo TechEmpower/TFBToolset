@@ -1,6 +1,8 @@
 use crate::config::{Named, Project, Test};
 use crate::docker::docker_config::DockerConfig;
 use crate::docker::listener::build_image::BuildImage;
+use crate::docker::listener::simple::Simple;
+use crate::error::ToolsetError::DockerError;
 use crate::error::ToolsetResult;
 use crate::io::Logger;
 use std::path::PathBuf;
@@ -31,4 +33,18 @@ pub fn build_image(
     )?;
 
     Ok(image_id)
+}
+
+/// Pulls the given `image_name`.
+pub fn pull_image(config: &DockerConfig, image_name: &str) -> ToolsetResult<()> {
+    match dockurl::image::create_image(
+        image_name,
+        "latest",
+        &config.database_docker_host,
+        config.use_unix_socket,
+        Simple::new(),
+    ) {
+        Ok(()) => Ok(()),
+        Err(e) => Err(DockerError(e)),
+    }
 }

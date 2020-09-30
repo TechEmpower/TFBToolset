@@ -8,7 +8,7 @@ use crate::docker::container::{
     stop_docker_container_future,
 };
 use crate::docker::docker_config::DockerConfig;
-use crate::docker::image::build_image;
+use crate::docker::image::{build_image, pull_image};
 use crate::docker::listener::benchmarker::BenchmarkResults;
 use crate::docker::listener::simple::Simple;
 use crate::docker::listener::verifier::Error;
@@ -16,18 +16,22 @@ use crate::docker::network::{connect_container_to_network, create_network};
 use crate::docker::{
     BenchmarkCommands, DockerContainerIdFuture, DockerOrchestration, Verification,
 };
-use crate::error::ToolsetError::{NoResponseFromDockerContainerError, VerificationFailedException};
+use crate::error::ToolsetError::{
+    AppServerContainerShutDownError, NoResponseFromDockerContainerError,
+    VerificationFailedException,
+};
 use crate::error::{ToolsetError, ToolsetResult};
 use crate::io::{report_verifications, Logger};
 use crate::metadata;
 use crate::results::{BenchmarkData, Results};
 use colored::Colorize;
 use curl::easy::Easy2;
-use dockurl::container::stop_container;
+use dockurl::container::{inspect_container, stop_container};
 use dockurl::network::NetworkMode;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread::sleep;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{thread, time};
 
@@ -56,6 +60,7 @@ pub enum Mode {
 ///              if the verification of the `URL` passes, runs the
 ///              `TFBBenchmarker` against it, captures the results, parses
 ///              them, and writes them to the results file.
+#[derive(Debug)]
 pub struct Benchmarker {
     docker_config: DockerConfig,
     projects: Vec<Project>,
@@ -502,8 +507,10 @@ impl Benchmarker {
         Ok(verification)
     }
 
-    ///
-    ///
+    /// Requests the verifier to start for the purposes of retrieving the run
+    /// commands for the purposes of benchmarking.
+    /// In practice, this will retrieve, for some test type, a `wrk` command to
+    /// run on the client.
     fn run_command_retrieval(
         &mut self,
         orchestration: &DockerOrchestration,
@@ -663,23 +670,15 @@ impl Benchmarker {
         network_id: &str,
     ) -> ToolsetResult<Option<String>> {
         if let Some(database) = &test.database {
-            // todo - this will be pulled from Dockerhub at some point, but for
-            //  local testing, we just have to build it and use it.
-            //  Let me try again - you have to:
-            //  ```
-            //  $ cd FrameworkBenchmarks/toolset/databases/postgres
-            //  $ docker build -t tfb.database.postgres -f postgres.dockerfile .
-            //  ```
-            //  before this local testing will work.
-            // println!("Going to pull tfb.database.{}", database);
-            // pull_image(
-            //     &docker_config,
-            //     &format!("tfb.database.{}", database.to_lowercase()),
-            // )?;
+            let mut logger = Logger::with_prefix(&database);
+            // todo - how should we version this?
+            let image_name = format!("techempower/tfb.database.{}", database.to_lowercase());
+            logger.log(format!("Pulling {}; this may take some time.", &image_name))?;
+            pull_image(&self.docker_config, &image_name)?;
 
             let container_id = create_container(
                 &self.docker_config,
-                &format!("tfb.database.{}", database.to_lowercase()),
+                &image_name,
                 network_id,
                 &self.docker_config.database_host,
                 &self.docker_config.database_docker_host,
@@ -694,7 +693,6 @@ impl Benchmarker {
                 &container_ids,
             )?;
 
-            let mut logger = Logger::with_prefix(&database);
             logger.quiet = true;
 
             if let Ok(mut database_container_id) = self.database_container_id.lock() {
@@ -708,6 +706,10 @@ impl Benchmarker {
                 &self.docker_config.database_docker_host,
                 &logger,
             )?;
+
+            // Todo - need to verify that the database started and is accepting
+            //  requests.
+            sleep(Duration::from_secs(1));
 
             return Ok(Some(container_ids.0));
         }
@@ -725,6 +727,16 @@ impl Benchmarker {
     ) -> ToolsetResult<()> {
         let mut slept_for = 0;
         loop {
+            self.trip();
+            let inspect = inspect_container(
+                &container_ids.0,
+                &self.docker_config.server_docker_host,
+                self.docker_config.use_unix_socket,
+                Simple::new(),
+            )?;
+            if !inspect.state.running {
+                return Err(AppServerContainerShutDownError);
+            }
             self.trip();
             if slept_for > 60 {
                 self.trip();
