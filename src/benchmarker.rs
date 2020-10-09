@@ -12,7 +12,7 @@ use crate::docker::image::{build_image, pull_image};
 use crate::docker::listener::benchmarker::BenchmarkResults;
 use crate::docker::listener::simple::Simple;
 use crate::docker::listener::verifier::Error;
-use crate::docker::network::{connect_container_to_network, create_network};
+use crate::docker::network::connect_container_to_network;
 use crate::docker::{
     BenchmarkCommands, DockerContainerIdFuture, DockerOrchestration, Verification,
 };
@@ -27,7 +27,6 @@ use crate::results::{BenchmarkData, Results};
 use colored::Colorize;
 use curl::easy::Easy2;
 use dockurl::container::{inspect_container, stop_container};
-use dockurl::network::NetworkMode;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -332,7 +331,7 @@ impl Benchmarker {
             &benchmark_commands.primer_command.join(" ")
         ))?;
         logger.log("---------------------------------------------------------")?;
-        self.run_benchmark(&orchestration, &benchmark_commands.primer_command, &logger)?;
+        self.run_benchmark(&benchmark_commands.primer_command, &logger)?;
 
         logger.log("---------------------------------------------------------")?;
         logger.log(" Running Warmup")?;
@@ -341,14 +340,14 @@ impl Benchmarker {
             &benchmark_commands.warmup_command.join(" ")
         ))?;
         logger.log("---------------------------------------------------------")?;
-        self.run_benchmark(&orchestration, &benchmark_commands.warmup_command, &logger)?;
+        self.run_benchmark(&benchmark_commands.warmup_command, &logger)?;
 
         for command in &benchmark_commands.benchmark_commands {
             logger.log("---------------------------------------------------------")?;
             logger.log(format!(" {}", command.join(" ")))?;
             logger.log("---------------------------------------------------------")?;
 
-            results.push(self.run_benchmark(&orchestration, command, &logger)?);
+            results.push(self.run_benchmark(command, &logger)?);
         }
 
         Ok(results)
@@ -357,27 +356,25 @@ impl Benchmarker {
     /// Runs the benchmarker container against the given `DockerOrchestration`.
     fn run_benchmark(
         &mut self,
-        orchestration: &DockerOrchestration,
         command: &[String],
         logger: &Logger,
     ) -> ToolsetResult<BenchmarkResults> {
-        let container_id =
-            create_benchmarker_container(&self.docker_config, orchestration, command)?;
-        let container_ids = (container_id, None);
+        let container_id = create_benchmarker_container(&self.docker_config, command)?;
 
         connect_container_to_network(
             &self.docker_config,
             &self.docker_config.client_docker_host,
-            &orchestration.network_id,
-            &container_ids,
+            &self.docker_config.client_network_id,
+            &container_id,
         )?;
 
         if let Ok(mut benchmarker) = self.benchmarker_container_id.lock() {
-            benchmarker.register(&container_ids.0);
+            benchmarker.register(&container_id);
         }
         self.trip();
         let benchmark_results =
-            start_benchmarker_container(&self.docker_config, &container_ids.0, logger)?;
+            start_benchmarker_container(&self.docker_config, &container_id, logger)?;
+
         // This signals that the benchmarker exited naturally on
         // its own, so we don't need to stop its container.
         if let Ok(mut benchmarker) = self.benchmarker_container_id.lock() {
@@ -475,19 +472,17 @@ impl Benchmarker {
         let container_id =
             create_verifier_container(&self.docker_config, orchestration, Mode::Verify, test_type)?;
 
-        let container_ids = (container_id, None);
-
         connect_container_to_network(
             &self.docker_config,
-            &self.docker_config.server_docker_host,
-            &orchestration.network_id,
-            &container_ids,
+            &self.docker_config.client_docker_host,
+            &self.docker_config.client_network_id,
+            &container_id,
         )?;
 
         // This DockerContainerIdFuture is different than the others
         // because it blocks until the verifier exits.
         if let Ok(mut verifier) = self.verifier_container_id.lock() {
-            verifier.register(&container_ids.0);
+            verifier.register(&container_id);
         }
         self.trip();
         let verification = start_verification_container(
@@ -495,9 +490,10 @@ impl Benchmarker {
             project,
             test,
             test_type,
-            &container_ids,
+            &container_id,
             logger,
         )?;
+
         // This signals that the verifier exited naturally on
         // its own, so we don't need to stop its container.
         if let Ok(mut verifier) = self.verifier_container_id.lock() {
@@ -525,25 +521,23 @@ impl Benchmarker {
             test_type,
         )?;
 
-        let container_ids = (container_id, None);
-
         connect_container_to_network(
             &self.docker_config,
             &self.docker_config.client_docker_host,
-            &orchestration.network_id,
-            &container_ids,
+            &self.docker_config.client_network_id,
+            &container_id,
         )?;
 
         // This DockerContainerIdFuture is different than the others
         // because it blocks until the verifier exits.
         if let Ok(mut verifier) = self.verifier_container_id.lock() {
-            verifier.register(&container_ids.0);
+            verifier.register(&container_id);
         }
         self.trip();
         let commands = start_benchmark_command_retrieval_container(
             &self.docker_config,
             &test_type,
-            &container_ids.0,
+            &container_id,
             logger,
         )?;
         // This signals that the verifier exited naturally on
@@ -566,14 +560,11 @@ impl Benchmarker {
         test: &Test,
         logger: &Logger,
     ) -> ToolsetResult<DockerOrchestration> {
-        self.retrieve_verifier(&logger)?;
+        logger.log("Pulling verifier; this may take some time.")?;
+        // todo - how should we version this?
+        pull_image(&self.docker_config, "techempower/tfb.verifier")?;
 
-        let network_id = match &self.docker_config.network_mode {
-            NetworkMode::Bridge => create_network(&self.docker_config)?,
-            NetworkMode::Host => "host".to_string(),
-        };
-
-        let database_container_id = self.start_database_if_necessary(test, &network_id)?;
+        let database_container_id = self.start_database_if_necessary(test)?;
         let mut database_ports = (None, None);
         if let Some(container_id) = &database_container_id {
             let ports = get_port_bindings_for_container(
@@ -589,22 +580,22 @@ impl Benchmarker {
         let container_id = create_container(
             &self.docker_config,
             &image_id,
-            &network_id,
+            &self.docker_config.server_network_id,
             &self.docker_config.server_host,
             &self.docker_config.server_docker_host,
         )?;
 
-        let container_ids = (container_id, database_container_id);
+        let container_ids = (container_id.clone(), database_container_id);
 
         connect_container_to_network(
             &self.docker_config,
             &self.docker_config.server_docker_host,
-            &network_id,
-            &container_ids,
+            &self.docker_config.server_network_id,
+            &container_id,
         )?;
 
         if let Ok(mut application_container_id) = self.application_container_id.lock() {
-            application_container_id.register(&container_ids.0);
+            application_container_id.register(&container_id);
         }
 
         self.trip();
@@ -624,7 +615,6 @@ impl Benchmarker {
         self.wait_until_accepting_requests(&container_ids, &host_ports.0, test)?;
 
         Ok(DockerOrchestration {
-            network_id,
             host_container_id: container_ids.0,
             host_port: host_ports.0,
             host_internal_port: host_ports.1,
@@ -666,11 +656,7 @@ impl Benchmarker {
 
     /// Starts the database for the given `Test` if one is specified as being
     /// required by the underlying configuration file.
-    fn start_database_if_necessary(
-        &mut self,
-        test: &Test,
-        network_id: &str,
-    ) -> ToolsetResult<Option<String>> {
+    fn start_database_if_necessary(&mut self, test: &Test) -> ToolsetResult<Option<String>> {
         if let Some(database) = &test.database {
             let mut logger = Logger::with_prefix(&database);
             // todo - how should we version this?
@@ -681,24 +667,24 @@ impl Benchmarker {
             let container_id = create_container(
                 &self.docker_config,
                 &image_name,
-                network_id,
+                &self.docker_config.database_network_id,
                 &self.docker_config.database_host,
                 &self.docker_config.database_docker_host,
             )?;
 
-            let container_ids = (container_id, None);
+            let container_ids = (container_id.clone(), None);
 
             connect_container_to_network(
                 &self.docker_config,
                 &self.docker_config.database_docker_host,
-                network_id,
-                &container_ids,
+                &self.docker_config.database_network_id,
+                &container_id,
             )?;
 
             logger.quiet = true;
 
             if let Ok(mut database_container_id) = self.database_container_id.lock() {
-                database_container_id.register(&container_ids.0);
+                database_container_id.register(&container_id);
             }
 
             self.trip();
@@ -711,7 +697,7 @@ impl Benchmarker {
 
             // Todo - need to verify that the database started and is accepting
             //  requests.
-            sleep(Duration::from_secs(1));
+            sleep(Duration::from_secs(2));
 
             return Ok(Some(container_ids.0));
         }
@@ -791,14 +777,5 @@ impl Benchmarker {
                 }
             }
         }
-    }
-
-    /// Retrieves the published TFBVerifier.
-    fn retrieve_verifier(&self, logger: &Logger) -> ToolsetResult<()> {
-        logger.log("Pulling verifier; this may take some time.")?;
-        // todo - how should we version this?
-        pull_image(&self.docker_config, "techempower/tfb.verifier")?;
-
-        Ok(())
     }
 }

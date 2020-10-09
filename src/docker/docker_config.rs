@@ -1,3 +1,4 @@
+use crate::docker::network::{get_network_id, get_tfb_network_id};
 use crate::io::{create_results_dir, Logger};
 use crate::options;
 use clap::ArgMatches;
@@ -8,10 +9,13 @@ pub struct DockerConfig {
     pub use_unix_socket: bool,
     pub server_docker_host: String,
     pub server_host: String,
+    pub server_network_id: String,
     pub database_docker_host: String,
     pub database_host: String,
+    pub database_network_id: String,
     pub client_docker_host: String,
     pub client_host: String,
+    pub client_network_id: String,
     pub network_mode: dockurl::network::NetworkMode,
     pub concurrency_levels: String,
     pub pipeline_concurrency_levels: String,
@@ -101,14 +105,35 @@ impl DockerConfig {
 
         let logger = Logger::in_dir(&create_results_dir().unwrap());
 
+        // There is a chance this is a hack, but it seems that these two
+        // networks are always available out of the box for Docker.
+        let server_network_id = match &network_mode {
+            Bridge => get_tfb_network_id(use_unix_socket, &database_docker_host),
+            Host => get_network_id(use_unix_socket, &server_docker_host, "host"),
+        }
+        .unwrap();
+        let database_network_id = match &network_mode {
+            Bridge => get_tfb_network_id(use_unix_socket, &database_docker_host),
+            Host => get_network_id(use_unix_socket, &database_docker_host, "host"),
+        }
+        .unwrap();
+        let client_network_id = match &network_mode {
+            Bridge => get_tfb_network_id(use_unix_socket, &database_docker_host),
+            Host => get_network_id(use_unix_socket, &client_docker_host, "host"),
+        }
+        .unwrap();
+
         Self {
             use_unix_socket,
             server_docker_host,
             server_host,
+            server_network_id,
             database_docker_host,
             database_host,
+            database_network_id,
             client_docker_host,
             client_host,
+            client_network_id,
             network_mode,
             concurrency_levels,
             pipeline_concurrency_levels,

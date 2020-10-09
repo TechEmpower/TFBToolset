@@ -15,7 +15,7 @@ pub mod network;
 
 #[derive(Debug)]
 pub struct DockerOrchestration {
-    pub network_id: String,
+    // pub network_id: Option<String>,
     pub host_container_id: String,
     pub host_port: String,
     pub host_internal_port: String,

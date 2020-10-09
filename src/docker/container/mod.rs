@@ -24,15 +24,14 @@ use dockurl::container::{
     attach_to_container, get_container_logs, inspect_container, kill_container,
     wait_for_container_to_exit,
 };
+use dockurl::network::NetworkMode;
 use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use std::thread;
 use std::time::Duration;
 
-/// Creates the container for the given `Test`.
 /// Note: this function makes the assumption that the image is already
 /// built and that the Docker daemon is aware of it.
-/// Call `build_image_for_test()` before running.
 pub fn create_container(
     config: &DockerConfig,
     image_id: &str,
@@ -46,9 +45,12 @@ pub fn create_container(
     options.domain_name(host_name);
 
     let mut host_config = HostConfig::new();
+    let mut endpoint_settings = EndpointSettings::new();
+    endpoint_settings.network_id(network_id);
     match &config.network_mode {
         dockurl::network::NetworkMode::Bridge => {
-            host_config.network_mode(dockurl::network::NetworkMode::Bridge)
+            host_config.network_mode(dockurl::network::NetworkMode::Bridge);
+            endpoint_settings.alias(host_name);
         }
         dockurl::network::NetworkMode::Host => {
             host_config.extra_host("tfb-database", &config.database_host);
@@ -57,15 +59,11 @@ pub fn create_container(
     }
     host_config.publish_all_ports(true);
 
-    options.host_config(host_config);
-
-    let mut endpoint_settings = EndpointSettings::new();
-    endpoint_settings.alias(host_name);
-    endpoint_settings.network_id(network_id);
-
     options.networking_config(NetworkingConfig {
         endpoints_config: EndpointsConfig { endpoint_settings },
     });
+
+    options.host_config(host_config);
 
     options.tty(true);
 
@@ -83,16 +81,16 @@ pub fn create_container(
 ///
 pub fn create_benchmarker_container(
     config: &DockerConfig,
-    orchestration: &DockerOrchestration,
     command: &[String],
 ) -> ToolsetResult<String> {
     let mut options = Options::new();
-    options.image("tfb.wrk"); // todo - rename
+    options.image("techempower/tfb.verifier");
     options.tty(true);
+    options.attach_stderr(true);
     options.cmds(command);
 
     let mut endpoint_settings = EndpointSettings::new();
-    endpoint_settings.network_id(&orchestration.network_id);
+    endpoint_settings.network_id(config.client_network_id.as_str());
 
     options.networking_config(NetworkingConfig {
         endpoints_config: EndpointsConfig { endpoint_settings },
@@ -111,8 +109,6 @@ pub fn create_benchmarker_container(
 /// Creates the container for the `TFBVerifier`.
 /// Note: this function makes the assumption that the image has already been
 /// pulled from Dockerhub and the Docker daemon is aware of it.
-/// todo - v does not exist yet.
-/// Call `pull_verifier()` before running.
 pub fn create_verifier_container(
     config: &DockerConfig,
     orchestration: &DockerOrchestration,
@@ -144,7 +140,7 @@ pub fn create_verifier_container(
     let mut host_config = HostConfig::new();
     match &config.network_mode {
         dockurl::network::NetworkMode::Bridge => {
-            host_config.network_mode(dockurl::network::NetworkMode::Bridge)
+            host_config.network_mode(dockurl::network::NetworkMode::Bridge);
         }
         dockurl::network::NetworkMode::Host => {
             host_config.extra_host("tfb-server", &config.server_host);
@@ -157,7 +153,7 @@ pub fn create_verifier_container(
     options.host_config(host_config);
 
     let mut endpoint_settings = EndpointSettings::new();
-    endpoint_settings.network_id(&orchestration.network_id);
+    endpoint_settings.network_id(config.client_network_id.as_str());
 
     options.networking_config(NetworkingConfig {
         endpoints_config: EndpointsConfig { endpoint_settings },
@@ -190,13 +186,27 @@ pub fn get_port_bindings_for_container(
     if let Some(exposed_ports) = inspection.config.exposed_ports {
         for key in exposed_ports.keys() {
             let inner_port: Vec<&str> = key.split('/').collect();
-            if let Some(key) = inspection.network_settings.ports.get(key) {
-                if let Some(port_mapping) = key.get(0) {
-                    if let Some(inner_port) = inner_port.get(0) {
-                        return Ok((port_mapping.host_port.clone(), inner_port.to_string()));
+
+            match docker_config.network_mode {
+                NetworkMode::Bridge => {
+                    if let Some(key) = inspection.network_settings.ports.get(key) {
+                        if let Some(port_mapping) = key.get(0) {
+                            if let Some(inner_port) = inner_port.get(0) {
+                                return Ok((
+                                    port_mapping.host_port.clone(),
+                                    inner_port.to_string(),
+                                ));
+                            }
+                        }
                     }
                 }
-            }
+                NetworkMode::Host => {
+                    return Ok((
+                        inner_port.get(0).unwrap().to_string(),
+                        inner_port.get(0).unwrap().to_string(),
+                    ))
+                }
+            };
         }
     }
 
@@ -303,17 +313,17 @@ pub fn start_verification_container(
     project: &Project,
     test: &Test,
     test_type: &(&String, &String),
-    container_ids: &(String, Option<String>),
+    container_id: &str,
     logger: &Logger,
 ) -> ToolsetResult<Verification> {
     dockurl::container::start_container(
-        &container_ids.0,
+        &container_id,
         &docker_config.client_docker_host,
         docker_config.use_unix_socket,
         Simple::new(),
     )?;
     let verifier = attach_to_container(
-        &container_ids.0,
+        &container_id,
         &docker_config.client_docker_host,
         docker_config.use_unix_socket,
         Verifier::new(project, test, test_type, logger),
