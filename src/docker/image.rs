@@ -36,11 +36,11 @@ pub fn build_image(
 }
 
 /// Pulls the given `image_name`.
-pub fn pull_image(config: &DockerConfig, image_name: &str) -> ToolsetResult<()> {
+pub fn pull_image(config: &DockerConfig, docker_host: &str, image_name: &str) -> ToolsetResult<()> {
     match dockurl::image::create_image(
         image_name,
         "latest",
-        &config.database_docker_host,
+        docker_host,
         config.use_unix_socket,
         Simple::new(),
     ) {

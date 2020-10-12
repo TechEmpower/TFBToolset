@@ -371,6 +371,7 @@ impl Benchmarker {
         if let Ok(mut benchmarker) = self.benchmarker_container_id.lock() {
             benchmarker.register(&container_id);
         }
+
         self.trip();
         let benchmark_results =
             start_benchmarker_container(&self.docker_config, &container_id, logger)?;
@@ -562,7 +563,11 @@ impl Benchmarker {
     ) -> ToolsetResult<DockerOrchestration> {
         logger.log("Pulling verifier; this may take some time.")?;
         // todo - how should we version this?
-        pull_image(&self.docker_config, "techempower/tfb.verifier")?;
+        pull_image(
+            &self.docker_config,
+            &self.docker_config.client_docker_host,
+            "techempower/tfb.verifier",
+        )?;
 
         let database_container_id = self.start_database_if_necessary(test)?;
         let mut database_ports = (None, None);
@@ -601,7 +606,7 @@ impl Benchmarker {
         self.trip();
         start_container(
             &self.docker_config,
-            &container_ids,
+            &container_id,
             &self.docker_config.server_docker_host,
             logger,
         )?;
@@ -609,7 +614,7 @@ impl Benchmarker {
         let host_ports = get_port_bindings_for_container(
             &self.docker_config,
             &self.docker_config.server_docker_host,
-            &container_ids.0,
+            &container_id,
         )?;
 
         self.wait_until_accepting_requests(&container_ids, &host_ports.0, test)?;
@@ -662,7 +667,11 @@ impl Benchmarker {
             // todo - how should we version this?
             let image_name = format!("techempower/tfb.database.{}", database.to_lowercase());
             logger.log(format!("Pulling {}; this may take some time.", &image_name))?;
-            pull_image(&self.docker_config, &image_name)?;
+            pull_image(
+                &self.docker_config,
+                &self.docker_config.database_docker_host,
+                &image_name,
+            )?;
 
             let container_id = create_container(
                 &self.docker_config,
@@ -671,8 +680,6 @@ impl Benchmarker {
                 &self.docker_config.database_host,
                 &self.docker_config.database_docker_host,
             )?;
-
-            let container_ids = (container_id.clone(), None);
 
             connect_container_to_network(
                 &self.docker_config,
@@ -690,7 +697,7 @@ impl Benchmarker {
             self.trip();
             start_container(
                 &self.docker_config,
-                &container_ids,
+                &container_id,
                 &self.docker_config.database_docker_host,
                 &logger,
             )?;
@@ -699,7 +706,7 @@ impl Benchmarker {
             //  requests.
             sleep(Duration::from_secs(2));
 
-            return Ok(Some(container_ids.0));
+            return Ok(Some(container_id));
         }
 
         Ok(None)

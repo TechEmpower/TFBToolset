@@ -15,7 +15,7 @@ use crate::error::ToolsetError::{
 };
 use crate::error::ToolsetResult;
 use crate::io::Logger;
-use dockurl::container::create::host_config::HostConfig;
+use dockurl::container::create::host_config::{HostConfig, Ulimit};
 use dockurl::container::create::networking_config::{
     EndpointSettings, EndpointsConfig, NetworkingConfig,
 };
@@ -25,6 +25,7 @@ use dockurl::container::{
     wait_for_container_to_exit,
 };
 use dockurl::network::NetworkMode;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use std::thread;
@@ -88,6 +89,28 @@ pub fn create_benchmarker_container(
     options.tty(true);
     options.attach_stderr(true);
     options.cmds(command);
+
+    let mut host_config = HostConfig::new();
+    match &config.network_mode {
+        dockurl::network::NetworkMode::Bridge => {
+            host_config.network_mode(dockurl::network::NetworkMode::Bridge);
+        }
+        dockurl::network::NetworkMode::Host => {
+            host_config.extra_host("tfb-server", &config.server_host);
+            host_config.network_mode(dockurl::network::NetworkMode::Host);
+        }
+    }
+    let mut sysctls = HashMap::new();
+    sysctls.insert("net.core.somaxconn", "65535");
+    host_config.sysctls(sysctls);
+    let ulimit = Ulimit {
+        name: "nofile",
+        soft: 65535,
+        hard: 65535,
+    };
+    host_config.ulimits(vec![ulimit]);
+
+    options.host_config(host_config);
 
     let mut endpoint_settings = EndpointSettings::new();
     endpoint_settings.network_id(config.client_network_id.as_str());
@@ -204,7 +227,7 @@ pub fn get_port_bindings_for_container(
                     return Ok((
                         inner_port.get(0).unwrap().to_string(),
                         inner_port.get(0).unwrap().to_string(),
-                    ))
+                    ));
                 }
             };
         }
@@ -219,17 +242,17 @@ pub fn get_port_bindings_for_container(
 /// Call `create_container()` before running.
 pub fn start_container(
     docker_config: &DockerConfig,
-    container_ids: &(String, Option<String>),
+    container_id: &str,
     docker_host: &str,
     logger: &Logger,
 ) -> ToolsetResult<()> {
     dockurl::container::start_container(
-        &container_ids.0,
+        container_id,
         docker_host,
         docker_config.use_unix_socket,
         Simple::new(),
     )?;
-    let container_id = container_ids.0.clone();
+    let container_id = container_id.to_string();
     let docker_host = docker_config.client_docker_host.clone();
     let use_unix_socket = docker_config.use_unix_socket;
     let logger = logger.clone();
