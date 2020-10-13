@@ -11,7 +11,7 @@ use crate::docker::{
     BenchmarkCommands, DockerContainerIdFuture, DockerOrchestration, Verification,
 };
 use crate::error::ToolsetError::{
-    ContainerPortMappingInspectionError, FailedBenchmarkCommandRetrievalError,
+    ContainerPortMappingInspectionError, ExposePortError, FailedBenchmarkCommandRetrievalError,
 };
 use crate::error::ToolsetResult;
 use crate::io::Logger;
@@ -58,14 +58,29 @@ pub fn create_container(
             host_config.network_mode(dockurl::network::NetworkMode::Host);
         }
     }
+    let mut sysctls = HashMap::new();
+    sysctls.insert("net.core.somaxconn", "65535");
+    host_config.sysctls(sysctls);
+    host_config.ulimits(vec![
+        Ulimit {
+            name: "nofile",
+            soft: 200000,
+            hard: 200000,
+        },
+        Ulimit {
+            name: "rtprio",
+            soft: 99,
+            hard: 99,
+        },
+    ]);
     host_config.publish_all_ports(true);
+    host_config.privileged(true);
 
     options.networking_config(NetworkingConfig {
         endpoints_config: EndpointsConfig { endpoint_settings },
     });
 
     options.host_config(host_config);
-
     options.tty(true);
 
     let container_id = dockurl::container::create_container(
@@ -78,17 +93,22 @@ pub fn create_container(
     Ok(container_id)
 }
 
-///
-///
+/// Creates the benchmarker container and returns the Docker ID
 pub fn create_benchmarker_container(
     config: &DockerConfig,
-    command: &[String],
+    command_strs: &[String],
 ) -> ToolsetResult<String> {
     let mut options = Options::new();
     options.image("techempower/tfb.verifier");
     options.tty(true);
     options.attach_stderr(true);
-    options.cmds(command);
+    // The command_str we get back is an array of strings that make up the wrk
+    // command; we want to replace `tfb-server` with the IP address
+    let mut command = vec![];
+    for command_str in command_strs {
+        command.push(command_str.replace("tfb-server", &config.server_host));
+    }
+    options.cmds(command.as_slice());
 
     let mut host_config = HostConfig::new();
     match &config.network_mode {
@@ -231,6 +251,8 @@ pub fn get_port_bindings_for_container(
                 }
             };
         }
+    } else {
+        return Err(ExposePortError);
     }
 
     Err(ContainerPortMappingInspectionError)

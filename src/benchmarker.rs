@@ -172,6 +172,7 @@ impl Benchmarker {
                         }
                     }
                     Err(e) => {
+                        logger.error(&e)?;
                         // We could not start this implementation's docker
                         // container(s); all of its test implementations must
                         // fail.
@@ -220,6 +221,7 @@ impl Benchmarker {
                         }
                     }
                     Err(e) => {
+                        logger.error(&e)?;
                         self.stop_containers();
                         return Err(e);
                     }
@@ -276,6 +278,7 @@ impl Benchmarker {
                         }
                     }
                     Err(e) => {
+                        logger.error(&e)?;
                         verifications.push(Verification {
                             framework_name: project.framework.get_name(),
                             test_name: test.get_name(),

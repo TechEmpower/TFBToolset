@@ -48,6 +48,9 @@ pub enum ToolsetError {
     #[error("Failed to inspect container for port mappings")]
     ContainerPortMappingInspectionError,
 
+    #[error("Dockerfile must expose port")]
+    ExposePortError,
+
     #[error("Failed to retrieve benchmark commands")]
     FailedBenchmarkCommandRetrievalError,
 
