@@ -58,15 +58,37 @@ impl Results {
                     display_name: test.get_name(),
                     name: test.get_name(),
                     classification: test.classification.clone(),
-                    database: test.database.clone(),
+                    database: if let Some(database) = &test.database {
+                        database.clone()
+                    } else {
+                        // todo - ↓ is a holdover from legacy metadata
+                        "none".to_string()
+                    },
                     language: project.language.clone(),
                     os: test.os.clone(),
-                    tags: test.tags.clone(),
+                    // todo - ↓ is a holdover from legacy metadata
+                    notes: "".to_string(),
+                    tags: if let Some(tags) = &test.tags {
+                        tags.clone()
+                    } else {
+                        // todo - ↓ is a holdover from legacy metadata
+                        vec![]
+                    },
                     framework: project.framework.get_name(),
                     webserver: test.webserver.clone(),
-                    orm: test.orm.clone(),
+                    orm: if let Some(orm) = &test.orm {
+                        orm.clone()
+                    } else {
+                        // todo - ↓ is a holdover from legacy metadata
+                        "none".to_string()
+                    },
                     platform: test.platform.clone(),
-                    database_os: test.database_os.clone(),
+                    database_os: if let Some(database_os) = &test.database_os {
+                        database_os.clone()
+                    } else {
+                        // todo - ↓ is a holdover from legacy metadata
+                        "linux".to_string()
+                    },
                     approach: test.approach.clone(),
                 });
             }
@@ -134,18 +156,15 @@ pub struct MetaData {
     pub display_name: String,
     pub name: String,
     pub classification: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub database: Option<String>,
+    pub database: String,
     pub language: String,
     pub os: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tags: Option<Vec<String>>,
+    pub notes: String,
+    pub tags: Vec<String>,
     pub framework: String,
     pub webserver: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub orm: Option<String>,
+    pub orm: String,
     pub platform: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub database_os: Option<String>,
+    pub database_os: String,
     pub approach: String,
 }
