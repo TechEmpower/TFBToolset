@@ -24,5 +24,5 @@ env:
 script:
   # TODO: Make sure this points to the real FrameworkBenchmarks repo when ready
   - mkdir ~/.tfb
-  - git clone git@github.com:TechEmpower/MockFrameworkBenchmarks.git ~/.tfb
+  - git clone https://github.com/TechEmpower/MockFrameworkBenchmarks.git ~/.tfb
   - cargo test -- --nocapture
