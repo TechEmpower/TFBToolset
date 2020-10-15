@@ -178,7 +178,7 @@ mod tests {
     fn it_can_get_framework_by_config_file() {
         let mut passed = false;
         if let Ok(mut tfb_path) = io::get_tfb_dir() {
-            tfb_path.push("frameworks/java/gemini/config.toml");
+            tfb_path.push("frameworks/Java/gemini/config.toml");
             for path in glob(tfb_path.to_str().unwrap()).unwrap() {
                 passed = match config::get_framework_by_config_file(&path.unwrap()) {
                     Ok(framework) => framework.get_name() == "Gemini",
@@ -193,7 +193,7 @@ mod tests {
     fn it_can_get_test_implementations_by_config_file() {
         let mut passed = false;
         if let Ok(mut tfb_path) = io::get_tfb_dir() {
-            tfb_path.push("frameworks/java/gemini/config.toml");
+            tfb_path.push("frameworks/Java/gemini/config.toml");
             for path in glob(tfb_path.to_str().unwrap()).unwrap() {
                 passed = match config::get_test_implementations_by_config_file(&path.unwrap()) {
                     Ok(tests) => !tests.is_empty(),
