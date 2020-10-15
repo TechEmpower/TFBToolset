@@ -22,5 +22,4 @@ regex = "1.3.9"
 lazy_static = "1.4.0"
 uuid = "0.8.1"
 rand = "0.7.3"
-
-dockurl = { path = "../dockurl" }
+dockurl = "0.1.0"
