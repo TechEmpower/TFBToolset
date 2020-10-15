@@ -176,17 +176,24 @@ mod tests {
 
     #[test]
     fn it_can_get_framework_by_config_file() {
-        let mut passed = false;
         if let Ok(mut tfb_path) = io::get_tfb_dir() {
             tfb_path.push("frameworks/Java/gemini/config.toml");
             for path in glob(tfb_path.to_str().unwrap()).unwrap() {
-                passed = match config::get_framework_by_config_file(&path.unwrap()) {
-                    Ok(framework) => framework.get_name() == "Gemini",
-                    Err(_) => false,
-                };
+                if let Ok(path) = path {
+                    match config::get_framework_by_config_file(&path) {
+                        Ok(framework) => assert_eq!(framework.get_name(), "Gemini"),
+                        Err(_) => panic!("{}", format!(
+                            "config::get_framework_by_config_file(&path.unwrap()) failed. path: {:?}",
+                            &path,
+                        )),
+                    };
+                } else {
+                    panic!("glob() failed.")
+                }
             }
+        } else {
+            panic!("io::get_tfb_dir() failed.");
         };
-        assert!(passed);
     }
 
     #[test]
