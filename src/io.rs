@@ -205,7 +205,6 @@ pub fn print_all_tests_for_framework(framework: &str) -> ToolsetResult<()> {
 pub fn get_tfb_dir() -> ToolsetResult<PathBuf> {
     let mut tfb_path = PathBuf::new();
     if let Ok(tfb_home) = env::var("TFB_HOME") {
-        eprintln!("tfb_home envvar set: {}", tfb_home);
         tfb_path.push(tfb_home);
     } else if let Some(mut home_dir) = dirs::home_dir() {
         home_dir.push(".tfb");

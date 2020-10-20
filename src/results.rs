@@ -61,17 +61,17 @@ impl Results {
                     database: if let Some(database) = &test.database {
                         database.clone()
                     } else {
-                        // todo - ↓ is a holdover from legacy metadata
+                        // ↓ is a holdover from legacy metadata
                         "none".to_string()
                     },
                     language: project.language.clone(),
                     os: test.os.clone(),
-                    // todo - ↓ is a holdover from legacy metadata
+                    // ↓ is a holdover from legacy metadata
                     notes: "".to_string(),
                     tags: if let Some(tags) = &test.tags {
                         tags.clone()
                     } else {
-                        // todo - ↓ is a holdover from legacy metadata
+                        // ↓ is a holdover from legacy metadata
                         vec![]
                     },
                     framework: project.framework.get_name(),
@@ -79,14 +79,14 @@ impl Results {
                     orm: if let Some(orm) = &test.orm {
                         orm.clone()
                     } else {
-                        // todo - ↓ is a holdover from legacy metadata
+                        // ↓ is a holdover from legacy metadata
                         "none".to_string()
                     },
                     platform: test.platform.clone(),
                     database_os: if let Some(database_os) = &test.database_os {
                         database_os.clone()
                     } else {
-                        // todo - ↓ is a holdover from legacy metadata
+                        // ↓ is a holdover from legacy metadata
                         "linux".to_string()
                     },
                     approach: test.approach.clone(),
@@ -97,7 +97,7 @@ impl Results {
         results.uuid = Uuid::from_u128(rng.gen::<u128>())
             .to_hyphenated()
             .to_string();
-        results.name = String::default(); // todo
+        results.name = docker_config.results_name.clone();
         results.start_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -123,7 +123,7 @@ impl Results {
             .split(',')
             .map(|l| str::parse::<u32>(l).unwrap())
             .collect();
-        results.environment_description = String::default(); // todo
+        results.environment_description = docker_config.results_environment.clone();
         results.git = Git::default(); // todo
 
         Ok(results)

@@ -38,10 +38,8 @@ $ cargo build --release
 
 ### Installing
 
-The executable `tfb_toolset` (`tfb_toolset.exe` on Windows) only needs to be on the `PATH`.
-
-TODO: Not sure what the recommendation here would be - maybe put in 
-`/usr/local/share` or similar? What about Windows?
+The executable `tfb_toolset` (`tfb_toolset.exe` on Windows) only needs to be on 
+the `PATH`.
 
 ## Running
 

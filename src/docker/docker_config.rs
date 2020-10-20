@@ -22,6 +22,9 @@ pub struct DockerConfig {
     pub query_levels: String,
     pub cached_query_levels: String,
     pub duration: u32,
+    pub results_name: String,
+    pub results_environment: String,
+    pub results_upload_uri: String,
     pub logger: Logger,
 }
 impl DockerConfig {
@@ -123,6 +126,19 @@ impl DockerConfig {
         }
         .unwrap();
 
+        let results_name = matches
+            .value_of(options::args::RESULTS_NAME)
+            .unwrap()
+            .to_string();
+        let results_environment = matches
+            .value_of(options::args::RESULTS_ENVIRONMENT)
+            .unwrap()
+            .to_string();
+        let results_upload_uri = matches
+            .value_of(options::args::RESULTS_UPLOAD_URI)
+            .unwrap()
+            .to_string();
+
         Self {
             use_unix_socket,
             server_docker_host,
@@ -138,9 +154,12 @@ impl DockerConfig {
             concurrency_levels,
             pipeline_concurrency_levels,
             logger,
-            query_levels, // todo - we don't use these correctly
+            query_levels,
             cached_query_levels,
             duration,
+            results_name,
+            results_environment,
+            results_upload_uri,
         }
     }
 }
