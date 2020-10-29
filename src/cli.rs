@@ -1,8 +1,9 @@
 use crate::benchmarker::{modes, Benchmarker};
+use crate::docker::docker_config::DockerConfig;
 use crate::error::ToolsetError::UnknownBenchmarkerModeError;
 use crate::error::ToolsetResult;
 use crate::io::get_tfb_dir;
-use crate::{io, options};
+use crate::{io, metadata, options};
 
 /// Runs the CLI matching the arguments/options passed and handling each.
 pub fn run() -> ToolsetResult<()> {
@@ -31,7 +32,9 @@ pub fn run() -> ToolsetResult<()> {
         println!("PARSE_RESULTS");
         Ok(())
     } else if let Some(mode) = matches.value_of(options::args::MODE) {
-        let mut benchmarker = Benchmarker::new(matches.clone());
+        let docker_config = DockerConfig::new(&matches);
+        let projects = metadata::list_projects_to_run(&matches);
+        let mut benchmarker = Benchmarker::new(docker_config, projects);
         match mode {
             modes::BENCHMARK => benchmarker.benchmark(),
             modes::VERIFY => benchmarker.verify(),

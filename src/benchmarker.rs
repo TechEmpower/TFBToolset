@@ -1,5 +1,3 @@
-use clap::ArgMatches;
-
 use crate::config::{Framework, Named, Project, Test};
 use crate::docker::container::{
     create_benchmarker_container, create_container, create_verifier_container,
@@ -22,7 +20,6 @@ use crate::error::ToolsetError::{
 };
 use crate::error::{ToolsetError, ToolsetResult};
 use crate::io::{report_verifications, Logger};
-use crate::metadata;
 use crate::results::{BenchmarkData, Results};
 use colored::Colorize;
 use curl::easy::Easy2;
@@ -60,8 +57,8 @@ pub enum Mode {
 ///              `TFBBenchmarker` against it, captures the results, parses
 ///              them, and writes them to the results file.
 #[derive(Debug)]
-pub struct Benchmarker {
-    docker_config: DockerConfig,
+pub struct Benchmarker<'a> {
+    docker_config: DockerConfig<'a>,
     projects: Vec<Project>,
     application_container_id: Arc<Mutex<DockerContainerIdFuture>>,
     database_container_id: Arc<Mutex<DockerContainerIdFuture>>,
@@ -69,9 +66,8 @@ pub struct Benchmarker {
     benchmarker_container_id: Arc<Mutex<DockerContainerIdFuture>>,
     ctrlc_received: Arc<AtomicBool>,
 }
-impl Benchmarker {
-    pub fn new(matches: ArgMatches) -> Self {
-        let docker_config = DockerConfig::new(&matches);
+impl<'a> Benchmarker<'a> {
+    pub fn new(docker_config: DockerConfig<'a>, projects: Vec<Project>) -> Self {
         let application_container_id = Arc::new(Mutex::new(DockerContainerIdFuture::new(
             &docker_config.server_docker_host,
         )));
@@ -87,7 +83,7 @@ impl Benchmarker {
 
         let benchmarker = Self {
             docker_config,
-            projects: metadata::list_projects_to_run(&matches),
+            projects,
             application_container_id,
             database_container_id,
             verifier_container_id,
@@ -95,7 +91,7 @@ impl Benchmarker {
             ctrlc_received: Arc::new(AtomicBool::new(false)),
         };
 
-        let docker_config = benchmarker.docker_config.clone();
+        let use_unix_socket = benchmarker.docker_config.use_unix_socket;
         let application_container_id = Arc::clone(&benchmarker.application_container_id);
         let database_container_id = Arc::clone(&benchmarker.database_container_id);
         let verifier_container_id = Arc::clone(&benchmarker.verifier_container_id);
@@ -110,7 +106,6 @@ impl Benchmarker {
                     .unwrap();
                 std::process::exit(0);
             } else {
-                let docker_config = docker_config.clone();
                 let application_container_id = Arc::clone(&application_container_id);
                 let database_container_id = Arc::clone(&database_container_id);
                 let verifier_container_id = Arc::clone(&verifier_container_id);
@@ -118,10 +113,10 @@ impl Benchmarker {
                 let ctrlc_received = Arc::clone(&ctrlc_received);
                 thread::spawn(move || {
                     ctrlc_received.store(true, Ordering::Release);
-                    stop_docker_container_future(&docker_config, &verifier_container_id);
-                    stop_docker_container_future(&docker_config, &benchmarker_container_id);
-                    stop_docker_container_future(&docker_config, &application_container_id);
-                    stop_docker_container_future(&docker_config, &database_container_id);
+                    stop_docker_container_future(use_unix_socket, &verifier_container_id);
+                    stop_docker_container_future(use_unix_socket, &benchmarker_container_id);
+                    stop_docker_container_future(use_unix_socket, &application_container_id);
+                    stop_docker_container_future(use_unix_socket, &database_container_id);
                     std::process::exit(0);
                 });
             }
@@ -656,10 +651,22 @@ impl Benchmarker {
     /// Convenience method for stopping all running containers and popping them
     /// off the running containers vec.
     fn stop_containers(&mut self) {
-        stop_docker_container_future(&self.docker_config, &self.verifier_container_id);
-        stop_docker_container_future(&self.docker_config, &self.benchmarker_container_id);
-        stop_docker_container_future(&self.docker_config, &self.application_container_id);
-        stop_docker_container_future(&self.docker_config, &self.database_container_id);
+        stop_docker_container_future(
+            self.docker_config.use_unix_socket,
+            &self.verifier_container_id,
+        );
+        stop_docker_container_future(
+            self.docker_config.use_unix_socket,
+            &self.benchmarker_container_id,
+        );
+        stop_docker_container_future(
+            self.docker_config.use_unix_socket,
+            &self.application_container_id,
+        );
+        stop_docker_container_future(
+            self.docker_config.use_unix_socket,
+            &self.database_container_id,
+        );
     }
 
     /// Starts the database for the given `Test` if one is specified as being
@@ -765,7 +772,7 @@ impl Benchmarker {
                 }
             }
 
-            match self.docker_config.server_host.as_str() {
+            match self.docker_config.server_host {
                 "tfb-server" => easy.url(&format!("http://localhost:{}{}", host_port, endpoint))?,
                 _ => easy.url(&format!(
                     "http://{}:{}{}",

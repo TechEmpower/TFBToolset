@@ -97,7 +97,7 @@ impl Results {
         results.uuid = Uuid::from_u128(rng.gen::<u128>())
             .to_hyphenated()
             .to_string();
-        results.name = docker_config.results_name.clone();
+        results.name = docker_config.results_name.to_string();
         results.start_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -123,7 +123,7 @@ impl Results {
             .split(',')
             .map(|l| str::parse::<u32>(l).unwrap())
             .collect();
-        results.environment_description = docker_config.results_environment.clone();
+        results.environment_description = docker_config.results_environment.to_string();
         results.git = Git::default(); // todo
 
         Ok(results)

@@ -1,20 +1,19 @@
 use crate::docker::network::{get_network_id, get_tfb_network_id};
 use crate::io::{create_results_dir, Logger};
 use crate::options;
-use clap::ArgMatches;
 use dockurl::network::NetworkMode::{Bridge, Host};
 
 #[derive(Debug, Clone)]
-pub struct DockerConfig {
+pub struct DockerConfig<'a> {
     pub use_unix_socket: bool,
     pub server_docker_host: String,
-    pub server_host: String,
+    pub server_host: &'a str,
     pub server_network_id: String,
     pub database_docker_host: String,
-    pub database_host: String,
+    pub database_host: &'a str,
     pub database_network_id: String,
     pub client_docker_host: String,
-    pub client_host: String,
+    pub client_host: &'a str,
     pub client_network_id: String,
     pub network_mode: dockurl::network::NetworkMode,
     pub concurrency_levels: String,
@@ -22,46 +21,30 @@ pub struct DockerConfig {
     pub query_levels: String,
     pub cached_query_levels: String,
     pub duration: u32,
-    pub results_name: String,
-    pub results_environment: String,
-    pub results_upload_uri: String,
+    pub results_name: &'a str,
+    pub results_environment: &'a str,
+    pub results_upload_uri: Option<&'a str>,
     pub logger: Logger,
 }
-impl DockerConfig {
-    pub fn new(matches: &ArgMatches) -> Self {
+impl<'a> DockerConfig<'a> {
+    pub fn new(matches: &'a clap::ArgMatches) -> Self {
         let server_docker_host = format!(
             "{}:2375",
-            matches
-                .value_of(options::args::SERVER_DOCKER_HOST)
-                .unwrap()
-                .to_string()
+            matches.value_of(options::args::SERVER_DOCKER_HOST).unwrap()
         );
         let database_docker_host = format!(
             "{}:2375",
             matches
                 .value_of(options::args::DATABASE_DOCKER_HOST)
                 .unwrap()
-                .to_string()
         );
         let client_docker_host = format!(
             "{}:2375",
-            matches
-                .value_of(options::args::CLIENT_DOCKER_HOST)
-                .unwrap()
-                .to_string()
+            matches.value_of(options::args::CLIENT_DOCKER_HOST).unwrap()
         );
-        let server_host = matches
-            .value_of(options::args::SERVER_HOST)
-            .unwrap()
-            .to_string();
-        let database_host = matches
-            .value_of(options::args::DATABASE_HOST)
-            .unwrap()
-            .to_string();
-        let client_host = matches
-            .value_of(options::args::CLIENT_HOST)
-            .unwrap()
-            .to_string();
+        let server_host = matches.value_of(options::args::SERVER_HOST).unwrap();
+        let database_host = matches.value_of(options::args::DATABASE_HOST).unwrap();
+        let client_host = matches.value_of(options::args::CLIENT_HOST).unwrap();
         let network_mode = match matches.value_of(options::args::NETWORK_MODE).unwrap() {
             options::network_modes::HOST => Host,
             _ => Bridge,
@@ -71,27 +54,23 @@ impl DockerConfig {
         let concurrency_levels = matches
             .values_of(options::args::CONCURRENCY_LEVELS)
             .unwrap()
-            .map(|item| item.to_string())
-            .collect::<Vec<String>>()
+            .collect::<Vec<&str>>()
             .join(",");
         let pipeline_concurrency_levels = matches
             .values_of(options::args::PIPELINE_CONCURRENCY_LEVELS)
             .unwrap()
-            .map(|item| item.to_string())
-            .collect::<Vec<String>>()
+            .collect::<Vec<&str>>()
             .join(",");
 
         let query_levels = matches
             .values_of(options::args::QUERY_LEVELS)
             .unwrap()
-            .map(|item| item.to_string())
-            .collect::<Vec<String>>()
+            .collect::<Vec<&str>>()
             .join(",");
         let cached_query_levels = matches
             .values_of(options::args::CACHED_QUERY_LEVELS)
             .unwrap()
-            .map(|item| item.to_string())
-            .collect::<Vec<String>>()
+            .collect::<Vec<&str>>()
             .join(",");
 
         // By default, we communicate with docker over a unix socket.
@@ -126,18 +105,14 @@ impl DockerConfig {
         }
         .unwrap();
 
-        let results_name = matches
-            .value_of(options::args::RESULTS_NAME)
-            .unwrap()
-            .to_string();
+        let results_name = matches.value_of(options::args::RESULTS_NAME).unwrap();
         let results_environment = matches
             .value_of(options::args::RESULTS_ENVIRONMENT)
-            .unwrap()
-            .to_string();
-        let results_upload_uri = matches
-            .value_of(options::args::RESULTS_UPLOAD_URI)
-            .unwrap()
-            .to_string();
+            .unwrap();
+        let results_upload_uri = match matches.value_of(options::args::RESULTS_UPLOAD_URI) {
+            None => None,
+            Some(str) => Some(str),
+        };
 
         Self {
             use_unix_socket,

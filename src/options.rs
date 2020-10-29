@@ -45,7 +45,7 @@ pub mod network_modes {
 }
 
 /// Parses all the arguments from the CLI and returns the configured matches.
-pub fn parse() -> App<'static> {
+pub fn parse<'app>() -> App<'app> {
     App::new("tfb_toolset")
         .version("0.1.0")
         .author("Mike Smith <msmith@techempower.com>")

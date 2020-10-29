@@ -383,7 +383,8 @@ pub fn start_verification_container(
 ///
 /// Note: this function blocks until the given `container` is in a ready state.
 pub fn stop_docker_container_future(
-    docker_config: &DockerConfig,
+    // docker_config: &DockerConfig,
+    use_unix_socket: bool,
     container: &Arc<Mutex<DockerContainerIdFuture>>,
 ) {
     let mut requires_wait_to_stop = false;
@@ -405,7 +406,7 @@ pub fn stop_docker_container_future(
                 kill_container(
                     container_id,
                     &container.docker_host,
-                    docker_config.use_unix_socket,
+                    use_unix_socket,
                     Simple::new(),
                 )
                 .unwrap_or(());
