@@ -1,10 +1,12 @@
 use crate::config::Named;
 use crate::docker::docker_config::DockerConfig;
 use crate::error::ToolsetResult;
+use crate::io::get_tfb_dir;
 use crate::metadata::list_all_projects;
 use rand::Rng;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
@@ -44,6 +46,7 @@ pub struct Results {
     // `{ "gemini": "20200810202733" }` - change to `u128` instead of string.
     pub completed: HashMap<String, String>,
 }
+
 impl Results {
     pub fn new(docker_config: &DockerConfig) -> ToolsetResult<Self> {
         let mut results = Results::default();
@@ -124,7 +127,7 @@ impl Results {
             .map(|l| str::parse::<u32>(l).unwrap())
             .collect();
         results.environment_description = docker_config.results_environment.to_string();
-        results.git = Git::default(); // todo
+        results.git = Git::default();
 
         Ok(results)
     }
@@ -141,12 +144,74 @@ pub struct BenchmarkData {
     pub end_time: u128,
 }
 
-#[derive(Serialize, Clone, Debug, Default)]
+#[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Git {
     pub commit_id: String,
     pub repository_url: String,
     pub branch_name: String,
+}
+
+impl Default for Git {
+    fn default() -> Self {
+        let tfb_dir = get_tfb_dir().unwrap();
+        let mut command = Command::new("git");
+        command.args(&["rev-parse", "HEAD"]);
+        command.current_dir(&tfb_dir);
+        let commit_id = String::from_utf8(
+            command
+                .output()
+                .unwrap_or_else(|_| {
+                    panic!("Failed to execute `git rev-parse HEAD` in {:?}", &tfb_dir)
+                })
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_string();
+
+        command = Command::new("git");
+        command.args(&["config", "--get", "remote.origin.url"]);
+        command.current_dir(&tfb_dir);
+        let repository_url = String::from_utf8(
+            command
+                .output()
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "Failed to execute `git config --get remote.origin.url`, in {:?}",
+                        &tfb_dir
+                    )
+                })
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_string();
+
+        command = Command::new("git");
+        command.args(&["rev-parse", "--abbrev-ref", "HEAD"]);
+        command.current_dir(&tfb_dir);
+        let branch_name = String::from_utf8(
+            command
+                .output()
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "Failed to execute `git rev-parse --abbrev-ref HEAD`, in {:?}",
+                        &tfb_dir
+                    )
+                })
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_string();
+
+        Git {
+            commit_id,
+            repository_url,
+            branch_name,
+        }
+    }
 }
 
 #[derive(Serialize, Clone, Debug, Default)]

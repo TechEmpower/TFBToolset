@@ -19,6 +19,7 @@ local machine for development and testing purposes.
 * [TechEmpower Frameworks](https://github.com/TechEmpower/FrameworkBenchmarks)
 * [Rust](https://rustup.rs/)
 * [Docker](https://docs.docker.com/engine/install/) or [Docker4Windows](https://docs.docker.com/docker-for-windows/install/)
+* [Git](https://git-scm.com/) (required for benchmarking only)
 
 #### Windows Only
 
