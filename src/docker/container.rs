@@ -383,7 +383,6 @@ pub fn start_verification_container(
 ///
 /// Note: this function blocks until the given `container` is in a ready state.
 pub fn stop_docker_container_future(
-    // docker_config: &DockerConfig,
     use_unix_socket: bool,
     container: &Arc<Mutex<DockerContainerIdFuture>>,
 ) {
