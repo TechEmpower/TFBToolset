@@ -30,8 +30,8 @@ pub enum ToolsetError {
     #[error("CtrlC Error occurred")]
     CtrlCError(#[from] ctrlc::Error),
 
-    #[error("Invalid FrameworkBenchmarks directory")]
-    InvalidFrameworkBenchmarksDirError,
+    #[error("Invalid FrameworkBenchmarks directory: {0}")]
+    InvalidFrameworkBenchmarksDirError(String),
 
     #[error("Docker Container did not respond")]
     NoResponseFromDockerContainerError,

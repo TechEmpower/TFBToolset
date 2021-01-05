@@ -219,7 +219,9 @@ pub fn get_tfb_dir() -> ToolsetResult<PathBuf> {
     let mut frameworks_dir = tfb_path.clone();
     frameworks_dir.push("frameworks");
     if !frameworks_dir.exists() {
-        return Err(InvalidFrameworkBenchmarksDirError);
+        return Err(InvalidFrameworkBenchmarksDirError(
+            frameworks_dir.to_str().unwrap().to_string(),
+        ));
     }
 
     Ok(tfb_path)
