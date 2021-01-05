@@ -25,6 +25,7 @@ pub struct Framework {
     pub authors: Option<Vec<String>>,
     pub github: Option<String>,
 }
+
 impl Named for Framework {
     fn get_name(&self) -> String {
         self.name.clone()
@@ -47,11 +48,13 @@ pub struct Test {
     pub tags: Option<Vec<String>>,
     pub dockerfile: Option<String>,
 }
+
 impl Named for Test {
     fn get_name(&self) -> String {
         self.name.clone().unwrap()
     }
 }
+
 impl Test {
     pub fn get_tag(&self) -> String {
         format!("tfb.test.{}", self.get_name())
@@ -74,6 +77,7 @@ pub struct Project {
     pub framework: Framework,
     pub tests: Vec<Test>,
 }
+
 impl Project {
     /// Returns the path of the project.
     pub fn get_path(&self) -> ToolsetResult<PathBuf> {
@@ -176,42 +180,49 @@ mod tests {
 
     #[test]
     fn it_can_get_framework_by_config_file() {
-        if let Ok(mut tfb_path) = io::get_tfb_dir() {
-            tfb_path.push("frameworks/Java/gemini/config.toml");
-            for path in glob(tfb_path.to_str().unwrap()).unwrap() {
-                if let Ok(path) = path {
-                    match config::get_framework_by_config_file(&path) {
-                        Ok(framework) => assert_eq!(framework.get_name(), "Gemini"),
-                        Err(_) => panic!("{}", format!(
-                            "config::get_framework_by_config_file(&path.unwrap()) failed. path: {:?}",
-                            &path,
-                        )),
-                    };
-                } else {
-                    panic!("glob() failed.");
+        match io::get_tfb_dir() {
+            Ok(tfb_path) => {
+                let mut tfb_path = tfb_path;
+                tfb_path.push("frameworks/Java/gemini/config.toml");
+                for path in glob(tfb_path.to_str().unwrap()).unwrap() {
+                    match path {
+                        Ok(path) => {
+                            match config::get_framework_by_config_file(&path) {
+                                Ok(framework) => assert_eq!(framework.get_name(), "Gemini"),
+                                Err(e) => panic!(
+                                    "config::get_framework_by_config_file(&path.unwrap()) failed. path: {:?}; error: {:?}",
+                                    &path,
+                                    e,
+                                ),
+                            };
+                        }
+                        Err(e) => panic!("glob() failed with error: {:?}", e),
+                    }
                 }
             }
-        } else {
-            panic!("io::get_tfb_dir() failed.");
-        };
+            Err(e) => panic!("io::get_tfb_dir failed with error: {:?}", e),
+        }
     }
 
     #[test]
     fn it_can_get_test_implementations_by_config_file() {
-        if let Ok(mut tfb_path) = io::get_tfb_dir() {
-            tfb_path.push("frameworks/Java/gemini/config.toml");
-            for path in glob(tfb_path.to_str().unwrap()).unwrap() {
-                if let Ok(path) = path {
-                    match config::get_test_implementations_by_config_file(&path) {
-                        Ok(tests) => !tests.is_empty(),
-                        Err(_) => panic!("config::get_test_implementations_by_config_file(&path.unwrap()) failed. path: {:?}", &path),
-                    };
-                } else {
-                    panic!("glob() failed.");
+        match io::get_tfb_dir() {
+            Ok(tfb_path) => {
+                let mut tfb_path = tfb_path;
+                tfb_path.push("frameworks/Java/gemini/config.toml");
+                for path in glob(tfb_path.to_str().unwrap()).unwrap() {
+                    match path {
+                        Ok(path) => {
+                            match config::get_test_implementations_by_config_file(&path) {
+                                Ok(tests) => !tests.is_empty(),
+                                Err(e) => panic!("config::get_test_implementations_by_config_file(&path.unwrap()) failed. path: {:?}; error: {:?}", &path, e),
+                            };
+                        }
+                        Err(e) => panic!("glob() failed with error: {:?}", e),
+                    }
                 }
             }
-        } else {
-            panic!("io::get_tfb_dir() failed.");
+            Err(e) => panic!("io::get_tfb_dir() failed with error: {:?}", e),
         }
     }
 }
