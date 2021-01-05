@@ -324,37 +324,33 @@ mod tests {
 
     #[test]
     fn it_will_get_a_valid_tfb_dir() {
-        let passed = match get_tfb_dir() {
-            Ok(_) => true,
-            _ => false,
+        match get_tfb_dir() {
+            Ok(_) => {}
+            Err(e) => panic!("io::get_tfb_dir failed. error: {:?}", e),
         };
-        assert!(passed);
     }
 
     #[test]
     fn it_can_print_all_tests() {
-        let passed = match print_all_tests() {
-            Ok(_) => true,
-            _ => false,
+        match print_all_tests() {
+            Ok(_) => {}
+            Err(e) => panic!("io::print_all_tests failed. error: {:?}", e),
         };
-        assert!(passed);
     }
 
     #[test]
     fn it_can_print_all_frameworks() {
-        let passed = match print_all_frameworks() {
-            Ok(_) => true,
-            _ => false,
+        match print_all_frameworks() {
+            Ok(_) => {}
+            Err(e) => panic!("io::print_all_frameworks failed. error: {:?}", e),
         };
-        assert!(passed);
     }
 
     #[test]
     fn it_can_print_all_tests_with_tag() {
-        let passed = match print_all_tests_with_tag("broken") {
-            Ok(_) => true,
-            _ => false,
+        match print_all_tests_with_tag("broken") {
+            Ok(_) => {}
+            Err(e) => panic!("io::print_all_tests_with_tag failed. error: {:?}", e),
         };
-        assert!(passed);
     }
 }

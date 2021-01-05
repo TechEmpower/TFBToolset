@@ -188,7 +188,7 @@ mod tests {
                         )),
                     };
                 } else {
-                    panic!("glob() failed.")
+                    panic!("glob() failed.");
                 }
             }
         } else {
@@ -198,16 +198,20 @@ mod tests {
 
     #[test]
     fn it_can_get_test_implementations_by_config_file() {
-        let mut passed = false;
         if let Ok(mut tfb_path) = io::get_tfb_dir() {
             tfb_path.push("frameworks/Java/gemini/config.toml");
             for path in glob(tfb_path.to_str().unwrap()).unwrap() {
-                passed = match config::get_test_implementations_by_config_file(&path.unwrap()) {
-                    Ok(tests) => !tests.is_empty(),
-                    Err(_) => false,
-                };
+                if let Ok(path) = path {
+                    match config::get_test_implementations_by_config_file(&path) {
+                        Ok(tests) => !tests.is_empty(),
+                        Err(_) => panic!("config::get_test_implementations_by_config_file(&path.unwrap()) failed. path: {:?}", &path),
+                    };
+                } else {
+                    panic!("glob() failed.");
+                }
             }
+        } else {
+            panic!("io::get_tfb_dir() failed.");
         }
-        assert!(passed);
     }
 }

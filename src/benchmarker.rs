@@ -304,11 +304,12 @@ impl<'a> Benchmarker<'a> {
             Err(VerificationFailedException)
         }
     }
+}
 
-    //
-    // PRIVATES
-    //
-
+//
+// PRIVATES
+//
+impl<'a> Benchmarker<'a> {
     /// Runs the benchmarks for a given `DockerOrchestration` and `test_type`.
     fn run_benchmarks(
         &mut self,

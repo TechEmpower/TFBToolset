@@ -199,46 +199,47 @@ mod tests {
 
     #[test]
     fn it_can_list_all_frameworks() {
-        let passed = match list_all_frameworks() {
-            Ok(_) => true,
-            _ => false,
+        match list_all_frameworks() {
+            Ok(_) => {}
+            Err(e) => panic!("metadata::list_all_frameworks failed. error: {:?}", e),
         };
-        assert!(passed);
     }
 
     #[test]
     fn it_can_list_all_tests() {
-        let passed = match list_all_tests() {
-            Ok(_) => true,
-            _ => false,
+        match list_all_tests() {
+            Ok(_) => {}
+            Err(e) => panic!("metadata::list_all_tests failed. error: {:?}", e),
         };
-        assert!(passed);
     }
 
     #[test]
     fn it_can_list_all_projects() {
-        let passed = match list_all_projects() {
+        match list_all_projects() {
             Ok(_) => true,
-            _ => false,
+            Err(e) => panic!("metadata::list_all_projects failed. error: {:?}", e),
         };
-        assert!(passed);
     }
 
     #[test]
     fn it_can_list_all_tests_for_framework() {
-        let passed = match list_tests_for_framework("Gemini") {
+        match list_tests_for_framework("Gemini") {
             Ok(tests) => !tests.is_empty(),
-            _ => false,
+            Err(e) => panic!(
+                "metadata::list_tests_for_framework(\"Gemini\") failed. error: {:?}",
+                e
+            ),
         };
-        assert!(passed);
     }
 
     #[test]
     fn it_can_list_all_tests_by_tag() {
-        let passed = match list_tests_by_tag("Non-Existent Tag") {
+        match list_tests_by_tag("Non-Existent Tag") {
             Ok(tests) => tests.is_empty(),
-            _ => false,
+            Err(e) => panic!(
+                "metadata::list_tests_by_tag(\"Non-Existent Tag\") failed. error: {:?}",
+                e
+            ),
         };
-        assert!(passed);
     }
 }
