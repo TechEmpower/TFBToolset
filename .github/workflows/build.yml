@@ -1,0 +1,30 @@
+name: build
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+env:
+  TFB_HOME: ./test
+  RUST_BACKTRACE: full
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-20.04, windows-2019, macos-11.0]
+        # "The Rust team appreciates testing against the beta and
+        # nightly channels, even if you are only targeting stable."
+        toolchain: [stable, nightly]
+      fail-fast: false
+    continue-on-error: ${{ matrix.toolchain == 'nightly' }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.toolchain }}
+          override: true
+      - name: Run the tests
+        run: cargo test -- --nocapture

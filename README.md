@@ -1,5 +1,7 @@
 # TFBToolset
 
+[![Build Status](https://github.com/TechEmpower/TFBToolset/workflows/build/badge.svg?branch=master&event=push)](https://github.com/TechEmpower/TFBToolset/actions?query=workflow%3Abuild+branch%3Amaster)
+
 The suite of tools that are run in the TechEmpower Framework
 Benchmarks. This application is a stand-alone executable which orchestrates
 several functions: auditing existing test implementations, running benchmarks, 
