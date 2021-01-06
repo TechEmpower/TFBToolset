@@ -126,11 +126,7 @@ pub fn get_language_by_config_file(framework: &Framework, file: &PathBuf) -> Too
 /// Parses the given `&PathBuf` of a `config.toml` file and returns the
 /// parsed framework block.
 pub fn get_framework_by_config_file(file: &PathBuf) -> ToolsetResult<Framework> {
-    let contents = std::fs::read_to_string(file)?;
-    let config: Config = match toml::from_str(&contents) {
-        Ok(config) => config,
-        Err(e) => return Err(InvalidConfigError(file.to_str().unwrap().to_string(), e)),
-    };
+    let config = parse_config(file)?;
 
     Ok(config.framework)
 }
@@ -153,11 +149,7 @@ pub fn get_test_implementations_by_config_file(file: &PathBuf) -> ToolsetResult<
     let mut tests: Vec<Test> = Vec::new();
 
     let contents = std::fs::read_to_string(file)?;
-    // let config: Config = toml::from_str(&contents)?;
-    let config: Config = match toml::from_str(&contents) {
-        Ok(config) => config,
-        Err(e) => return Err(InvalidConfigError(file.to_str().unwrap().to_string(), e)),
-    };
+    let config = parse_config(file)?;
     let parsed = contents.parse::<Value>()?;
     let table = parsed.as_table().unwrap();
 
@@ -186,6 +178,18 @@ pub fn get_test_implementations_by_config_file(file: &PathBuf) -> ToolsetResult<
 }
 
 //
+// Privates
+//
+
+fn parse_config(file: &PathBuf) -> ToolsetResult<Config> {
+    let contents = std::fs::read_to_string(file)?;
+    match toml::from_str(&contents) {
+        Ok(config) => Ok(config),
+        Err(e) => Err(InvalidConfigError(file.to_str().unwrap().to_string(), e)),
+    }
+}
+
+//
 // TESTS
 //
 
@@ -206,7 +210,7 @@ mod tests {
                     match path {
                         Ok(path) => {
                             match config::get_framework_by_config_file(&path) {
-                                Ok(framework) => assert_eq!(framework.get_name(), "gemini"),
+                                Ok(framework) => assert_eq!(framework.get_name().to_lowercase(), "gemini"),
                                 Err(e) => panic!(
                                     "config::get_framework_by_config_file(&path.unwrap()) failed. path: {:?}; error: {:?}",
                                     &path,

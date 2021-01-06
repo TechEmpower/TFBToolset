@@ -113,6 +113,40 @@ pub fn list_projects_by_test_name(
     Ok(projects)
 }
 
+pub fn list_projects_by_language_name(
+    language_name: Option<String>,
+    test_type: Option<&str>,
+) -> ToolsetResult<Vec<Project>> {
+    let mut projects = Vec::new();
+    let mut tfb_path = io::get_tfb_dir()?;
+    tfb_path.push("frameworks/*/*/config.toml");
+    for path in glob(tfb_path.to_str().unwrap()).unwrap() {
+        let path_buf: &PathBuf = &path.unwrap();
+        let project_name = config::get_project_name_by_config_file(&path_buf)?;
+        let framework = config::get_framework_by_config_file(&path_buf)?;
+        let mut tests = Vec::new();
+        let language = config::get_language_by_config_file(&framework, &path_buf)?;
+        if let Some(language_name) = &language_name {
+            if language_name.to_lowercase() == language.to_lowercase() {
+                for mut test in config::get_test_implementations_by_config_file(&path_buf)? {
+                    test.specify_test_type(test_type);
+                    tests.push(test);
+                }
+                if !tests.is_empty() {
+                    projects.push(Project {
+                        name: project_name,
+                        framework,
+                        tests,
+                        language,
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(projects)
+}
+
 /// Convenience function for calling `metadata::list_projects_by_test_name(None)`.
 pub fn list_all_projects() -> ToolsetResult<Vec<Project>> {
     list_projects_by_test_name(None, None)
@@ -122,30 +156,45 @@ pub fn list_all_projects() -> ToolsetResult<Vec<Project>> {
 pub fn list_projects_to_run(matches: &ArgMatches) -> Vec<Project> {
     let logger = Logger::default();
     let mut projects = Vec::new();
-    match matches.values_of(options::args::TEST_NAMES) {
-        Some(list) => {
-            let test_names: Vec<&str> = list.collect();
-            for test_name in test_names {
-                match list_projects_by_test_name(
-                    Some(String::from(test_name)),
-                    matches.value_of(options::args::TYPES),
-                ) {
-                    Ok(mut projects_found) => projects.append(&mut projects_found),
-                    Err(e) => logger
-                        .error(format!(
-                            "Error thrown collecting projects for test name: {}; {:?}",
-                            test_name, e
-                        ))
-                        .unwrap(),
-                };
+    if let Some(list) = matches.values_of(options::args::TEST_NAMES) {
+        let test_names: Vec<&str> = list.collect();
+        for test_name in test_names {
+            match list_projects_by_test_name(
+                Some(String::from(test_name)),
+                matches.value_of(options::args::TYPES),
+            ) {
+                Ok(mut projects_found) => projects.append(&mut projects_found),
+                Err(e) => logger
+                    .error(format!(
+                        "Error thrown collecting projects for test name: {}; {:?}",
+                        test_name, e
+                    ))
+                    .unwrap(),
+            };
+        }
+    } else if let Some(list) = matches.values_of(options::args::TEST_LANGUAGES) {
+        let test_languages: Vec<&str> = list.collect();
+        for language in test_languages {
+            match list_projects_by_language_name(
+                Some(String::from(language)),
+                matches.value_of(options::args::TYPES),
+            ) {
+                Ok(mut projects_found) => projects.append(&mut projects_found),
+                Err(e) => logger
+                    .error(format!(
+                        "Error thrown collecting projects for language name: {}; {:?}",
+                        language, e
+                    ))
+                    .unwrap(),
             }
         }
-        _ => match list_all_projects() {
+    } else {
+        match list_all_projects() {
             Ok(mut projects_found) => projects.append(&mut projects_found),
             Err(e) => logger
                 .error(format!("Error thrown collecting all projects: {:?}", e))
                 .unwrap(),
-        },
+        };
     }
 
     if let Some(project) = projects.get(0) {
@@ -199,25 +248,22 @@ mod tests {
 
     #[test]
     fn it_can_list_all_frameworks() {
-        match list_all_frameworks() {
-            Ok(_) => {}
-            Err(e) => panic!("metadata::list_all_frameworks failed. error: {:?}", e),
+        if let Err(e) = list_all_frameworks() {
+            panic!("metadata::list_all_frameworks failed. error: {:?}", e);
         };
     }
 
     #[test]
     fn it_can_list_all_tests() {
-        match list_all_tests() {
-            Ok(_) => {}
-            Err(e) => panic!("metadata::list_all_tests failed. error: {:?}", e),
+        if let Err(e) = list_all_tests() {
+            panic!("metadata::list_all_tests failed. error: {:?}", e);
         };
     }
 
     #[test]
     fn it_can_list_all_projects() {
-        match list_all_projects() {
-            Ok(_) => true,
-            Err(e) => panic!("metadata::list_all_projects failed. error: {:?}", e),
+        if let Err(e) = list_all_projects() {
+            panic!("metadata::list_all_projects failed. error: {:?}", e);
         };
     }
 
