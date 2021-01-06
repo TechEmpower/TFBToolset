@@ -1,7 +1,7 @@
 //! The config module contains all the structs relating to test implementation
 //! configuration files.
 
-use crate::error::ToolsetError::LanguageNotFoundError;
+use crate::error::ToolsetError::{InvalidConfigError, LanguageNotFoundError};
 use crate::error::ToolsetResult;
 use crate::io;
 use serde::Deserialize;
@@ -101,19 +101,23 @@ pub fn get_language_by_config_file(framework: &Framework, file: &PathBuf) -> Too
             language = Some(segment.file_name().unwrap().to_str().unwrap());
             break;
         }
-        if segment
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_lowercase()
-            == framework.get_name().to_lowercase()
+        if segment.file_name().is_some()
+            && segment
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_lowercase()
+                == framework.get_name().to_lowercase()
         {
             next = true;
         }
     }
     if language.is_none() {
-        return Err(LanguageNotFoundError);
+        return Err(LanguageNotFoundError(
+            framework.get_name().to_lowercase(),
+            file.to_str().unwrap().to_string(),
+        ));
     }
 
     Ok(String::from(language.unwrap()))
@@ -123,7 +127,10 @@ pub fn get_language_by_config_file(framework: &Framework, file: &PathBuf) -> Too
 /// parsed framework block.
 pub fn get_framework_by_config_file(file: &PathBuf) -> ToolsetResult<Framework> {
     let contents = std::fs::read_to_string(file)?;
-    let config: Config = toml::from_str(&contents)?;
+    let config: Config = match toml::from_str(&contents) {
+        Ok(config) => config,
+        Err(e) => return Err(InvalidConfigError(file.to_str().unwrap().to_string(), e)),
+    };
 
     Ok(config.framework)
 }
@@ -146,21 +153,32 @@ pub fn get_test_implementations_by_config_file(file: &PathBuf) -> ToolsetResult<
     let mut tests: Vec<Test> = Vec::new();
 
     let contents = std::fs::read_to_string(file)?;
-    let config: Config = toml::from_str(&contents)?;
+    // let config: Config = toml::from_str(&contents)?;
+    let config: Config = match toml::from_str(&contents) {
+        Ok(config) => config,
+        Err(e) => return Err(InvalidConfigError(file.to_str().unwrap().to_string(), e)),
+    };
     let parsed = contents.parse::<Value>()?;
     let table = parsed.as_table().unwrap();
 
     for key in table.keys() {
         if key != "framework" {
-            let mut test: Test = toml::from_str(&toml::to_string(table.get(key).unwrap())?)?;
-            let mut test_name = String::new();
-            test_name.push_str(&config.framework.name.to_lowercase());
-            if key != "main" {
-                test_name.push('-');
-                test_name.push_str(key);
+            match toml::from_str(&toml::to_string(table.get(key).unwrap())?) {
+                Ok(test) => {
+                    let mut test: Test = test;
+                    let mut test_name = String::new();
+                    test_name.push_str(&config.framework.name.to_lowercase());
+                    if key != "main" {
+                        test_name.push('-');
+                        test_name.push_str(key);
+                    }
+                    test.name = Some(test_name);
+                    tests.push(test);
+                }
+                Err(e) => {
+                    return Err(InvalidConfigError(file.to_str().unwrap().to_string(), e));
+                }
             }
-            test.name = Some(test_name);
-            tests.push(test);
         }
     }
 
@@ -188,7 +206,7 @@ mod tests {
                     match path {
                         Ok(path) => {
                             match config::get_framework_by_config_file(&path) {
-                                Ok(framework) => assert_eq!(framework.get_name(), "Gemini"),
+                                Ok(framework) => assert_eq!(framework.get_name(), "gemini"),
                                 Err(e) => panic!(
                                     "config::get_framework_by_config_file(&path.unwrap()) failed. path: {:?}; error: {:?}",
                                     &path,

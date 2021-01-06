@@ -21,11 +21,14 @@ pub enum ToolsetError {
     #[error("Toml serialize error occurred")]
     TomlSerializeError(#[from] toml::ser::Error),
 
+    #[error("Invalid config.toml: {0}, {1}")]
+    InvalidConfigError(String, toml::de::Error),
+
     #[error("Serde json error")]
     SerdeJsonError(#[from] serde_json::error::Error),
 
-    #[error("Language not found for config file")]
-    LanguageNotFoundError,
+    #[error("Language not found for config file: {0}; {1}")]
+    LanguageNotFoundError(String, String),
 
     #[error("CtrlC Error occurred")]
     CtrlCError(#[from] ctrlc::Error),
