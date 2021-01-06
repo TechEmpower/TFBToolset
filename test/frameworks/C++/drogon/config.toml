@@ -1,0 +1,27 @@
+[framework]
+name = "Drogon"
+
+[main]
+urls.json = "/json"
+urls.plaintext = "/plaintext"
+approach = "Realistic"
+classification = "Fullstack"
+platform = "Servlet"
+webserver = "Resin"
+os = "Linux"
+versus = "servlet"
+
+[core]
+urls.db = "/db"
+urls.fortune = "/fortunes"
+urls.query = "/queries?queries="
+urls.update = "/updates?queries="
+approach = "Realistic"
+classification = "Fullstack"
+platform = "Servlet"
+database = "Postgres"
+database_os = "Linux"
+orm = "Raw"
+webserver = "Resin"
+os = "Linux"
+versus = "servlet"

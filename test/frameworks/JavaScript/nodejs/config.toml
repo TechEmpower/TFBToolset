@@ -1,0 +1,26 @@
+[framework]
+name = "NodeJS"
+
+[main]
+urls.json = "/json"
+approach = "Realistic"
+classification = "Fullstack"
+platform = "nodejs"
+webserver = "None"
+os = "Linux"
+versus = "nodejs"
+
+[mongodb]
+urls.db = "/db"
+urls.query = "/queries?queries="
+urls.fortune = "/fortunes"
+urls.update = "/updates?queries="
+approach = "Realistic"
+classification = "Fullstack"
+database = "MongoDB"
+orm = "Full"
+platform = "nodejs"
+webserver = "None"
+os = "Linux"
+database_os = "Linux"
+versus = "nodejs"

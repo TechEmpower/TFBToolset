@@ -1,0 +1,20 @@
+[framework]
+name = "Actix"
+
+[main]
+urls.plaintext = "/plaintext"
+approach = "Realistic"
+classification = "Fullstack"
+platform = "None"
+webserver = "actix-web"
+os = "Linux"
+versus = ""
+
+[raw]
+urls.plaintext = "/plaintext"
+approach = "Realistic"
+classification = "Fullstack"
+platform = "None"
+webserver = "actix-web"
+os = "Linux"
+versus = ""
