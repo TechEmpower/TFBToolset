@@ -113,8 +113,9 @@ pub fn list_projects_by_test_name(
     Ok(projects)
 }
 
+/// Lists projects by language name
 pub fn list_projects_by_language_name(
-    language_name: Option<String>,
+    language_name: &str,
     test_type: Option<&str>,
 ) -> ToolsetResult<Vec<Project>> {
     let mut projects = Vec::new();
@@ -126,21 +127,50 @@ pub fn list_projects_by_language_name(
         let framework = config::get_framework_by_config_file(&path_buf)?;
         let mut tests = Vec::new();
         let language = config::get_language_by_config_file(&framework, &path_buf)?;
-        if let Some(language_name) = &language_name {
-            if language_name.to_lowercase() == language.to_lowercase() {
-                for mut test in config::get_test_implementations_by_config_file(&path_buf)? {
-                    test.specify_test_type(test_type);
-                    tests.push(test);
-                }
-                if !tests.is_empty() {
-                    projects.push(Project {
-                        name: project_name,
-                        framework,
-                        tests,
-                        language,
-                    });
-                }
+        if language_name.to_lowercase() == language.to_lowercase() {
+            for mut test in config::get_test_implementations_by_config_file(&path_buf)? {
+                test.specify_test_type(test_type);
+                tests.push(test);
             }
+            if !tests.is_empty() {
+                projects.push(Project {
+                    name: project_name,
+                    framework,
+                    tests,
+                    language,
+                });
+            }
+        }
+    }
+
+    Ok(projects)
+}
+
+/// Lists projects by directory name.
+pub fn list_projects_by_dir_name(
+    dir_name: &str,
+    test_type: Option<&str>,
+) -> ToolsetResult<Vec<Project>> {
+    let mut projects = Vec::new();
+    let mut tfb_path = io::get_tfb_dir()?;
+    tfb_path.push(&format!("frameworks/*/{}/config.toml", dir_name));
+    for path in glob(tfb_path.to_str().unwrap()).unwrap() {
+        let path_buf: &PathBuf = &path.unwrap();
+        let project_name = config::get_project_name_by_config_file(&path_buf)?;
+        let framework = config::get_framework_by_config_file(&path_buf)?;
+        let mut tests = Vec::new();
+        let language = config::get_language_by_config_file(&framework, &path_buf)?;
+        for mut test in config::get_test_implementations_by_config_file(&path_buf)? {
+            test.specify_test_type(test_type);
+            tests.push(test);
+        }
+        if !tests.is_empty() {
+            projects.push(Project {
+                name: project_name,
+                framework,
+                tests,
+                language,
+            });
         }
     }
 
@@ -175,15 +205,25 @@ pub fn list_projects_to_run(matches: &ArgMatches) -> Vec<Project> {
     } else if let Some(list) = matches.values_of(options::args::TEST_LANGUAGES) {
         let test_languages: Vec<&str> = list.collect();
         for language in test_languages {
-            match list_projects_by_language_name(
-                Some(String::from(language)),
-                matches.value_of(options::args::TYPES),
-            ) {
+            match list_projects_by_language_name(language, matches.value_of(options::args::TYPES)) {
                 Ok(mut projects_found) => projects.append(&mut projects_found),
                 Err(e) => logger
                     .error(format!(
                         "Error thrown collecting projects for language name: {}; {:?}",
                         language, e
+                    ))
+                    .unwrap(),
+            }
+        }
+    } else if let Some(list) = matches.values_of(options::args::TEST_DIRS) {
+        let test_dirs: Vec<&str> = list.collect();
+        for dir in test_dirs {
+            match list_projects_by_dir_name(dir, matches.value_of(options::args::TYPES)) {
+                Ok(mut projects_found) => projects.append(&mut projects_found),
+                Err(e) => logger
+                    .error(format!(
+                        "Error thrown collecting projects for directory name: {}; {:?}",
+                        dir, e
                     ))
                     .unwrap(),
             }
