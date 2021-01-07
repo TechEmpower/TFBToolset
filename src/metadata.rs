@@ -147,13 +147,16 @@ pub fn list_projects_by_language_name(
 }
 
 /// Lists projects by directory name.
+/// Note: This function assumes you are referencing the directory *structure* under the `framework`
+/// directory.
+/// Example: `dir_name` = "Java/gemini"
 pub fn list_projects_by_dir_name(
     dir_name: &str,
     test_type: Option<&str>,
 ) -> ToolsetResult<Vec<Project>> {
     let mut projects = Vec::new();
     let mut tfb_path = io::get_tfb_dir()?;
-    tfb_path.push(&format!("frameworks/*/{}/config.toml", dir_name));
+    tfb_path.push(&format!("frameworks/{}/config.toml", dir_name));
     for path in glob(tfb_path.to_str().unwrap()).unwrap() {
         let path_buf: &PathBuf = &path.unwrap();
         let project_name = config::get_project_name_by_config_file(&path_buf)?;
