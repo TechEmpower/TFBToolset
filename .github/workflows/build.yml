@@ -28,3 +28,51 @@ jobs:
           override: true
       - name: Run the tests
         run: cargo test -- --nocapture
+  setup-integration-test:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - name: Build the release
+        run: cargo build --release
+      - name: Upload tfb_toolset for integration tests
+        uses: actions/upload-artifact@v2
+        with:
+          name: tfb_toolset
+          path: target/release/tfb_toolset
+      - id: verify_out
+        name: Write integration test job matrix
+        run: |
+          # Use of jq for JSON array creation from https://stackoverflow.com/a/26809318
+          # The following creates a JSON array populated by the lang directories
+          # with a TESTLANG object in the include array for each language under test/frameworks
+          VERIFY_MATRIX=$(ls -1 test/frameworks | jq -R | jq -sc "{include: map({TESTLANG: .})}")
+          echo "::set-output name=verify_matrix::$VERIFY_MATRIX"
+    outputs:
+      verify_matrix: ${{ steps.verify_out.outputs.verify_matrix }}
+  integration-test:
+    runs-on: ubuntu-20.04
+    needs: setup-integration-test
+    strategy:
+      matrix: ${{ fromJSON(needs.setup-integration-test.outputs.verify_matrix) }}
+      # Disable fail-fast to allow all failing frameworks/etc to fail in a
+      # single build, rather than stopping when the first one fails.
+      fail-fast: false
+    env:
+      TESTLANG: ${{ matrix.TESTLANG }}
+    steps:
+      - uses: actions/checkout@v2
+      - name: Download tfb_toolset
+        uses: actions/download-artifact@v2
+        with:
+          name: tfb_toolset
+          path: .
+      - name: Run the tests
+        run: |
+          sudo chmod +x ./tfb_toolset
+          ./tfb_toolset --mode cicd --test-lang $TESTLANG --results-environment Github-Actions;
