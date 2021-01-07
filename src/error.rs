@@ -6,7 +6,7 @@ pub type ToolsetResult<T> = Result<T, ToolsetError>;
 
 #[derive(Error, Debug)]
 pub enum ToolsetError {
-    #[error("Dockurl Error")]
+    #[error("Dockurl Error: {0}")]
     DockerError(#[from] dockurl::error::DockerError),
 
     #[error("Curl error occurred")]

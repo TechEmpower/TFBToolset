@@ -66,6 +66,7 @@ pub struct Benchmarker<'a> {
     benchmarker_container_id: Arc<Mutex<DockerContainerIdFuture>>,
     ctrlc_received: Arc<AtomicBool>,
 }
+
 impl<'a> Benchmarker<'a> {
     pub fn new(docker_config: DockerConfig<'a>, projects: Vec<Project>) -> Self {
         let application_container_id = Arc::new(Mutex::new(DockerContainerIdFuture::new(
@@ -787,6 +788,9 @@ impl<'a> Benchmarker<'a> {
                 Ok(code) => {
                     if code > 0 {
                         return Ok(());
+                    } else {
+                        slept_for += 1;
+                        thread::sleep(Duration::from_secs(1));
                     }
                 }
                 _ => {
