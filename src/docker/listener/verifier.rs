@@ -4,7 +4,7 @@ use crate::io::Logger;
 use curl::easy::{Handler, WriteError};
 use serde::Deserialize;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Verifier {
     pub verification: Verification,
     logger: Logger,

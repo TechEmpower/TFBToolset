@@ -153,7 +153,7 @@ pub fn parse<'app>() -> App<'app> {
                 .long("mode")
                 .short('m')
                 .takes_value(true)
-                .possible_values(&[modes::BENCHMARK, modes::VERIFY, modes::DEBUG])
+                .possible_values(&[modes::BENCHMARK, modes::VERIFY, modes::CICD, modes::DEBUG])
         )
         .arg(
             Arg::with_name(args::LIST_FRAMEWORKS)

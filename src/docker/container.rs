@@ -12,6 +12,7 @@ use crate::docker::{
 };
 use crate::error::ToolsetError::{
     ContainerPortMappingInspectionError, ExposePortError, FailedBenchmarkCommandRetrievalError,
+    VerificationFailedException,
 };
 use crate::error::ToolsetResult;
 use crate::io::Logger;
@@ -29,6 +30,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use std::thread;
+use std::thread::sleep;
 use std::time::Duration;
 
 /// Note: this function makes the assumption that the image is already
@@ -367,14 +369,33 @@ pub fn start_verification_container(
         docker_config.use_unix_socket,
         Simple::new(),
     )?;
-    let verifier = attach_to_container(
-        &container_id,
-        &docker_config.client_docker_host,
-        docker_config.use_unix_socket,
-        Verifier::new(project, test, test_type, logger),
-    )?;
 
-    Ok(verifier.verification)
+    let mut running = true;
+    let mut slept = 0;
+    let max_sleep = 10;
+    while running && slept < max_sleep {
+        let inspection = inspect_container(
+            &container_id,
+            &docker_config.client_docker_host,
+            docker_config.use_unix_socket,
+            Simple::new(),
+        )?;
+        running = inspection.state.running;
+        slept += 1;
+        sleep(Duration::from_secs(1));
+    }
+    if !running {
+        let verification = get_container_logs(
+            &container_id,
+            &docker_config.client_docker_host,
+            docker_config.use_unix_socket,
+            Verifier::new(project, test, test_type, logger),
+        )?;
+
+        return Ok(verification.verification);
+    }
+
+    Err(VerificationFailedException)
 }
 
 /// Polls until `container` is ready with either some `container_id` or `None`,

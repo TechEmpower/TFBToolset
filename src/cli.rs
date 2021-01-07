@@ -34,10 +34,10 @@ pub fn run() -> ToolsetResult<()> {
     } else if let Some(mode) = matches.value_of(options::args::MODE) {
         let docker_config = DockerConfig::new(&matches);
         let projects = metadata::list_projects_to_run(&matches);
-        let mut benchmarker = Benchmarker::new(docker_config, projects);
+        let mut benchmarker = Benchmarker::new(docker_config, projects, mode);
         match mode {
             modes::BENCHMARK => benchmarker.benchmark(),
-            modes::VERIFY => benchmarker.verify(),
+            modes::VERIFY | modes::CICD => benchmarker.verify(),
             modes::DEBUG => benchmarker.debug(),
             _ => Err(UnknownBenchmarkerModeError(mode.to_string())),
         }

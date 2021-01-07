@@ -1,3 +1,4 @@
+use crate::benchmarker::modes::CICD;
 use crate::config::{Framework, Named, Project, Test};
 use crate::docker::container::{
     create_benchmarker_container, create_container, create_verifier_container,
@@ -34,6 +35,7 @@ use std::{thread, time};
 pub mod modes {
     pub const BENCHMARK: &str = "benchmark";
     pub const VERIFY: &str = "verify";
+    pub const CICD: &str = "cicd";
     pub const DEBUG: &str = "debug";
 }
 
@@ -68,7 +70,7 @@ pub struct Benchmarker<'a> {
 }
 
 impl<'a> Benchmarker<'a> {
-    pub fn new(docker_config: DockerConfig<'a>, projects: Vec<Project>) -> Self {
+    pub fn new(docker_config: DockerConfig<'a>, projects: Vec<Project>, mode: &str) -> Self {
         let application_container_id = Arc::new(Mutex::new(DockerContainerIdFuture::new(
             &docker_config.server_docker_host,
         )));
@@ -92,37 +94,39 @@ impl<'a> Benchmarker<'a> {
             ctrlc_received: Arc::new(AtomicBool::new(false)),
         };
 
-        let use_unix_socket = benchmarker.docker_config.use_unix_socket;
-        let application_container_id = Arc::clone(&benchmarker.application_container_id);
-        let database_container_id = Arc::clone(&benchmarker.database_container_id);
-        let verifier_container_id = Arc::clone(&benchmarker.verifier_container_id);
-        let benchmarker_container_id = Arc::clone(&benchmarker.benchmarker_container_id);
-        let ctrlc_received = Arc::clone(&benchmarker.ctrlc_received);
-        ctrlc::set_handler(move || {
-            let logger = Logger::default();
-            logger.log("Shutting down (may take a moment)").unwrap();
-            if ctrlc_received.load(Ordering::Acquire) {
-                logger
-                    .log("Exiting immediately (there may still be running containers to stop)")
-                    .unwrap();
-                std::process::exit(0);
-            } else {
-                let application_container_id = Arc::clone(&application_container_id);
-                let database_container_id = Arc::clone(&database_container_id);
-                let verifier_container_id = Arc::clone(&verifier_container_id);
-                let benchmarker_container_id = Arc::clone(&benchmarker_container_id);
-                let ctrlc_received = Arc::clone(&ctrlc_received);
-                thread::spawn(move || {
-                    ctrlc_received.store(true, Ordering::Release);
-                    stop_docker_container_future(use_unix_socket, &verifier_container_id);
-                    stop_docker_container_future(use_unix_socket, &benchmarker_container_id);
-                    stop_docker_container_future(use_unix_socket, &application_container_id);
-                    stop_docker_container_future(use_unix_socket, &database_container_id);
+        if mode != CICD {
+            let use_unix_socket = benchmarker.docker_config.use_unix_socket;
+            let application_container_id = Arc::clone(&benchmarker.application_container_id);
+            let database_container_id = Arc::clone(&benchmarker.database_container_id);
+            let verifier_container_id = Arc::clone(&benchmarker.verifier_container_id);
+            let benchmarker_container_id = Arc::clone(&benchmarker.benchmarker_container_id);
+            let ctrlc_received = Arc::clone(&benchmarker.ctrlc_received);
+            ctrlc::set_handler(move || {
+                let logger = Logger::default();
+                logger.log("Shutting down (may take a moment)").unwrap();
+                if ctrlc_received.load(Ordering::Acquire) {
+                    logger
+                        .log("Exiting immediately (there may still be running containers to stop)")
+                        .unwrap();
                     std::process::exit(0);
-                });
-            }
-        })
-        .unwrap();
+                } else {
+                    let application_container_id = Arc::clone(&application_container_id);
+                    let database_container_id = Arc::clone(&database_container_id);
+                    let verifier_container_id = Arc::clone(&verifier_container_id);
+                    let benchmarker_container_id = Arc::clone(&benchmarker_container_id);
+                    let ctrlc_received = Arc::clone(&ctrlc_received);
+                    thread::spawn(move || {
+                        ctrlc_received.store(true, Ordering::Release);
+                        stop_docker_container_future(use_unix_socket, &verifier_container_id);
+                        stop_docker_container_future(use_unix_socket, &benchmarker_container_id);
+                        stop_docker_container_future(use_unix_socket, &application_container_id);
+                        stop_docker_container_future(use_unix_socket, &database_container_id);
+                        std::process::exit(0);
+                    });
+                }
+            })
+            .unwrap();
+        }
 
         benchmarker
     }
@@ -774,30 +778,24 @@ impl<'a> Benchmarker<'a> {
                 }
             }
 
-            match self.docker_config.server_host {
-                "tfb-server" => easy.url(&format!("http://localhost:{}{}", host_port, endpoint))?,
-                _ => easy.url(&format!(
+            let url = match self.docker_config.server_host {
+                "tfb-server" => format!("http://localhost:{}{}", host_port, endpoint),
+                _ => format!(
                     "http://{}:{}{}",
                     &self.docker_config.server_host, host_port, endpoint
-                ))?,
+                ),
             };
+            easy.url(&url)?;
             easy.timeout(time::Duration::from_secs(1))?;
             let _ = easy.perform();
 
-            match easy.response_code() {
-                Ok(code) => {
-                    if code > 0 {
-                        return Ok(());
-                    } else {
-                        slept_for += 1;
-                        thread::sleep(Duration::from_secs(1));
-                    }
-                }
-                _ => {
-                    slept_for += 1;
-                    thread::sleep(Duration::from_secs(1));
+            if let Ok(code) = easy.response_code() {
+                if code > 0 {
+                    return Ok(());
                 }
             }
+            slept_for += 1;
+            thread::sleep(Duration::from_secs(1));
         }
     }
 }
