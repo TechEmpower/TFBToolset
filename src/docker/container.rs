@@ -372,7 +372,7 @@ pub fn start_verification_container(
 
     let mut running = true;
     let mut slept = 0;
-    let max_sleep = 10;
+    let max_sleep = 60;
     while running && slept < max_sleep {
         let inspection = inspect_container(
             &container_id,
