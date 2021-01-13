@@ -323,6 +323,7 @@ mod tests {
     use crate::io::print_all_frameworks;
     use crate::io::print_all_tests;
     use crate::io::print_all_tests_with_tag;
+    use crate::metadata::TAG_BROKEN;
 
     #[test]
     fn it_will_get_a_valid_tfb_dir() {
@@ -350,7 +351,7 @@ mod tests {
 
     #[test]
     fn it_can_print_all_tests_with_tag() {
-        match print_all_tests_with_tag("broken") {
+        match print_all_tests_with_tag(TAG_BROKEN) {
             Ok(_) => {}
             Err(e) => panic!("io::print_all_tests_with_tag failed. error: {:?}", e),
         };

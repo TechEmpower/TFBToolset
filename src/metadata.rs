@@ -10,6 +10,8 @@ use clap::ArgMatches;
 use glob::glob;
 use std::path::PathBuf;
 
+pub const TAG_BROKEN: &str = "broken";
+
 /// Walks the FrameworkBenchmarks directory's `framework` sub-dir to find all
 /// test implementations' `config.toml`, parse each file, and pushes the top-
 /// level `framework` to the return Vec.
@@ -129,8 +131,16 @@ pub fn list_projects_by_language_name(
         let language = config::get_language_by_config_file(&framework, &path_buf)?;
         if language_name.to_lowercase() == language.to_lowercase() {
             for mut test in config::get_test_implementations_by_config_file(&path_buf)? {
-                test.specify_test_type(test_type);
-                tests.push(test);
+                if test.tags.is_none()
+                    || !test
+                        .tags
+                        .as_ref()
+                        .unwrap()
+                        .contains(&TAG_BROKEN.to_string())
+                {
+                    test.specify_test_type(test_type);
+                    tests.push(test);
+                }
             }
             if !tests.is_empty() {
                 projects.push(Project {
@@ -164,8 +174,16 @@ pub fn list_projects_by_dir_name(
         let mut tests = Vec::new();
         let language = config::get_language_by_config_file(&framework, &path_buf)?;
         for mut test in config::get_test_implementations_by_config_file(&path_buf)? {
-            test.specify_test_type(test_type);
-            tests.push(test);
+            if test.tags.is_none()
+                || !test
+                    .tags
+                    .as_ref()
+                    .unwrap()
+                    .contains(&TAG_BROKEN.to_string())
+            {
+                test.specify_test_type(test_type);
+                tests.push(test);
+            }
         }
         if !tests.is_empty() {
             projects.push(Project {

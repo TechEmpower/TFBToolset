@@ -47,7 +47,7 @@ pub mod network_modes {
 /// Parses all the arguments from the CLI and returns the configured matches.
 pub fn parse<'app>() -> App<'app> {
     App::new("tfb_toolset")
-        .version("0.1.0")
+        .version("0.4.4")
         .author("Mike Smith <msmith@techempower.com>")
         .about("The toolset for the TechEmpower Framework Benchmarks.")
         // Suite options
