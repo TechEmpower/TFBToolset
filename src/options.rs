@@ -44,10 +44,12 @@ pub mod network_modes {
     pub const HOST: &str = "host";
 }
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Parses all the arguments from the CLI and returns the configured matches.
 pub fn parse<'app>() -> App<'app> {
     App::new("tfb_toolset")
-        .version("0.4.4")
+        .version(VERSION)
         .author("Mike Smith <msmith@techempower.com>")
         .about("The toolset for the TechEmpower Framework Benchmarks.")
         // Suite options

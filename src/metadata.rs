@@ -223,6 +223,18 @@ pub fn list_projects_to_run(matches: &ArgMatches) -> Vec<Project> {
                     .unwrap(),
             };
         }
+        if projects.is_empty() {
+            logger
+                .error(format!(
+                    "Found no project for the supplied test name(s): {}",
+                    matches
+                        .values_of(options::args::TEST_NAMES)
+                        .unwrap()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                ))
+                .unwrap();
+        }
     } else if let Some(list) = matches.values_of(options::args::TEST_LANGUAGES) {
         let test_languages: Vec<&str> = list.collect();
         for language in test_languages {
@@ -235,6 +247,18 @@ pub fn list_projects_to_run(matches: &ArgMatches) -> Vec<Project> {
                     ))
                     .unwrap(),
             }
+        }
+        if projects.is_empty() {
+            logger
+                .error(format!(
+                    "Found no project for the supplied language(s): {}",
+                    matches
+                        .values_of(options::args::TEST_LANGUAGES)
+                        .unwrap()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                ))
+                .unwrap();
         }
     } else if let Some(list) = matches.values_of(options::args::TEST_DIRS) {
         let test_dirs: Vec<&str> = list.collect();
@@ -249,6 +273,18 @@ pub fn list_projects_to_run(matches: &ArgMatches) -> Vec<Project> {
                     .unwrap(),
             }
         }
+        if projects.is_empty() {
+            logger
+                .error(format!(
+                    "Found no project for the supplied test dir(s): {}",
+                    matches
+                        .values_of(options::args::TEST_DIRS)
+                        .unwrap()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                ))
+                .unwrap();
+        }
     } else {
         match list_all_projects() {
             Ok(mut projects_found) => projects.append(&mut projects_found),
@@ -256,28 +292,6 @@ pub fn list_projects_to_run(matches: &ArgMatches) -> Vec<Project> {
                 .error(format!("Error thrown collecting all projects: {:?}", e))
                 .unwrap(),
         };
-    }
-
-    if let Some(project) = projects.get(0) {
-        if project.tests.is_empty() {
-            logger
-                .error(format!(
-                    "Found no test implementations for project: {}",
-                    project.framework.name
-                ))
-                .unwrap();
-        }
-    } else {
-        logger
-            .error(format!(
-                "Found no project for the supplied test name(s): {}",
-                matches
-                    .values_of(options::args::TEST_NAMES)
-                    .unwrap()
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            ))
-            .unwrap();
     }
 
     projects

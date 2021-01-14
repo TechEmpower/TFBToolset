@@ -1,10 +1,10 @@
 use crate::benchmarker::modes::CICD;
 use crate::config::{Framework, Named, Project, Test};
 use crate::docker::container::{
-    create_benchmarker_container, create_container, create_verifier_container,
-    get_port_bindings_for_container, start_benchmark_command_retrieval_container,
-    start_benchmarker_container, start_container, start_verification_container,
-    stop_docker_container_future,
+    block_until_database_is_ready, create_benchmarker_container, create_container,
+    create_database_verifier_container, create_verifier_container, get_port_bindings_for_container,
+    start_benchmark_command_retrieval_container, start_benchmarker_container, start_container,
+    start_verification_container, stop_docker_container_future,
 };
 use crate::docker::docker_config::DockerConfig;
 use crate::docker::image::{build_image, pull_image};
@@ -28,7 +28,6 @@ use dockurl::container::{inspect_container, stop_container};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread::sleep;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{thread, time};
 
@@ -140,6 +139,13 @@ impl<'a> Benchmarker<'a> {
     pub fn benchmark(&mut self) -> ToolsetResult<()> {
         let mut benchmark_results = Results::new(&self.docker_config)?;
         let logger = self.docker_config.logger.clone();
+        logger.log("Pulling verifier; this may take some time.")?;
+        // todo - how should we version this?
+        pull_image(
+            &self.docker_config,
+            &self.docker_config.client_docker_host,
+            "techempower/tfb.verifier",
+        )?;
         let projects = &self.projects.clone();
         for project in projects {
             for test in &project.tests {
@@ -238,6 +244,13 @@ impl<'a> Benchmarker<'a> {
         let mut succeeded = true;
         let mut verifications = Vec::new();
         let logger = self.docker_config.logger.clone();
+        logger.log("Pulling verifier; this may take some time.")?;
+        // todo - how should we version this?
+        pull_image(
+            &self.docker_config,
+            &self.docker_config.client_docker_host,
+            "techempower/tfb.verifier",
+        )?;
         let projects = &self.projects.clone();
         for project in projects {
             for test in &project.tests {
@@ -260,6 +273,8 @@ impl<'a> Benchmarker<'a> {
                                     verifications.push(verification);
                                 }
                                 Err(e) => {
+                                    // todo - remove this. Failing on CI - no idea why.
+                                    dbg!(&e);
                                     verifications.push(Verification {
                                         framework_name: project.framework.get_name(),
                                         test_name: test.get_name(),
@@ -565,14 +580,6 @@ impl<'a> Benchmarker<'a> {
         test: &Test,
         logger: &Logger,
     ) -> ToolsetResult<DockerOrchestration> {
-        logger.log("Pulling verifier; this may take some time.")?;
-        // todo - how should we version this?
-        pull_image(
-            &self.docker_config,
-            &self.docker_config.client_docker_host,
-            "techempower/tfb.verifier",
-        )?;
-
         let database_container_id = self.start_database_if_necessary(test)?;
         let mut database_ports = (None, None);
         if let Some(container_id) = &database_container_id {
@@ -680,7 +687,6 @@ impl<'a> Benchmarker<'a> {
     fn start_database_if_necessary(&mut self, test: &Test) -> ToolsetResult<Option<String>> {
         if let Some(database) = &test.database {
             let mut logger = Logger::with_prefix(&database);
-            // todo - how should we version this?
             let image_name = format!("techempower/tfb.database.{}", database.to_lowercase());
             logger.log(format!("Pulling {}; this may take some time.", &image_name))?;
             pull_image(
@@ -718,9 +724,32 @@ impl<'a> Benchmarker<'a> {
                 &logger,
             )?;
 
-            // Todo - need to verify that the database started and is accepting
-            //  requests.
-            sleep(Duration::from_secs(2));
+            // Block until the database is accepting requests.
+            self.trip();
+            let verifier_container_id =
+                create_database_verifier_container(&self.docker_config, &database.to_lowercase())?;
+
+            connect_container_to_network(
+                &self.docker_config,
+                &self.docker_config.client_docker_host,
+                &self.docker_config.client_network_id,
+                &verifier_container_id,
+            )?;
+
+            // This DockerContainerIdFuture is different than the others
+            // because it blocks until the verifier exits.
+            if let Ok(mut verifier) = self.verifier_container_id.lock() {
+                verifier.register(&verifier_container_id);
+            }
+            self.trip();
+
+            block_until_database_is_ready(&self.docker_config, &verifier_container_id)?;
+
+            // This signals that the verifier exited naturally on
+            // its own, so we don't need to stop its container.
+            if let Ok(mut verifier) = self.verifier_container_id.lock() {
+                verifier.unregister();
+            }
 
             return Ok(Some(container_id));
         }

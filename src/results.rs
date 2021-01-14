@@ -51,7 +51,6 @@ impl Results {
     pub fn new(docker_config: &DockerConfig) -> ToolsetResult<Self> {
         let mut results = Results::default();
 
-        results.test_metadata = Vec::default();
         for project in list_all_projects()? {
             for test in &project.tests {
                 results.test_metadata.push(MetaData {

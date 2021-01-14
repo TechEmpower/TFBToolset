@@ -12,7 +12,6 @@ use crate::docker::{
 };
 use crate::error::ToolsetError::{
     ContainerPortMappingInspectionError, ExposePortError, FailedBenchmarkCommandRetrievalError,
-    VerificationFailedException,
 };
 use crate::error::ToolsetResult;
 use crate::io::Logger;
@@ -30,7 +29,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use std::thread;
-use std::thread::sleep;
 use std::time::Duration;
 
 /// Note: this function makes the assumption that the image is already
@@ -214,6 +212,61 @@ pub fn create_verifier_container(
     Ok(container_id)
 }
 
+/// Creates the container for the `TFBVerifier`.
+/// Note: this function makes the assumption that the image has already been
+/// pulled from Dockerhub and the Docker daemon is aware of it.
+pub fn create_database_verifier_container(
+    config: &DockerConfig,
+    database_name: &str,
+) -> ToolsetResult<String> {
+    let mut options = Options::new();
+    options.image("techempower/tfb.verifier");
+    options.tty(true);
+    options.add_env("MODE", "database");
+    // These are required but unused.
+    options.add_env("PORT", "0");
+    options.add_env("ENDPOINT", "");
+    options.add_env("TEST_TYPE", "");
+
+    options.add_env("CONCURRENCY_LEVELS", &config.concurrency_levels);
+    options.add_env(
+        "PIPELINE_CONCURRENCY_LEVELS",
+        &config.pipeline_concurrency_levels,
+    );
+    options.add_env("DATABASE", database_name);
+
+    let mut host_config = HostConfig::new();
+    match &config.network_mode {
+        dockurl::network::NetworkMode::Bridge => {
+            host_config.network_mode(dockurl::network::NetworkMode::Bridge);
+        }
+        dockurl::network::NetworkMode::Host => {
+            host_config.extra_host("tfb-server", &config.server_host);
+            host_config.extra_host("tfb-database", &config.database_host);
+            host_config.network_mode(dockurl::network::NetworkMode::Host);
+        }
+    }
+    host_config.publish_all_ports(true);
+
+    options.host_config(host_config);
+
+    let mut endpoint_settings = EndpointSettings::new();
+    endpoint_settings.network_id(config.client_network_id.as_str());
+
+    options.networking_config(NetworkingConfig {
+        endpoints_config: EndpointsConfig { endpoint_settings },
+    });
+
+    let container_id = dockurl::container::create_container(
+        options,
+        config.use_unix_socket,
+        &config.client_docker_host,
+        BuildContainer::new(),
+    )?;
+
+    Ok(container_id)
+}
+
 /// Gets both the internal and host port binding for the container given by
 /// `container_id`.
 pub fn get_port_bindings_for_container(
@@ -292,8 +345,7 @@ pub fn start_container(
     Ok(())
 }
 
-///
-///
+/// Retrieves the benchmark commands for the
 pub fn start_benchmark_command_retrieval_container(
     docker_config: &DockerConfig,
     test_type: &(&String, &String),
@@ -370,32 +422,43 @@ pub fn start_verification_container(
         Simple::new(),
     )?;
 
-    let mut running = true;
-    let mut slept = 0;
-    let max_sleep = 60;
-    while running && slept < max_sleep {
-        let inspection = inspect_container(
-            &container_id,
-            &docker_config.client_docker_host,
-            docker_config.use_unix_socket,
-            Simple::new(),
-        )?;
-        running = inspection.state.running;
-        slept += 1;
-        sleep(Duration::from_secs(1));
-    }
-    if !running {
-        let verification = get_container_logs(
-            &container_id,
-            &docker_config.client_docker_host,
-            docker_config.use_unix_socket,
-            Verifier::new(project, test, test_type, logger),
-        )?;
+    wait_for_container_to_exit(
+        container_id,
+        &docker_config.client_docker_host,
+        docker_config.use_unix_socket,
+        Simple::new(),
+    )?;
 
-        return Ok(verification.verification);
-    }
+    let verification = get_container_logs(
+        &container_id,
+        &docker_config.client_docker_host,
+        docker_config.use_unix_socket,
+        Verifier::new(project, test, test_type, logger),
+    )?;
 
-    Err(VerificationFailedException)
+    Ok(verification.verification)
+}
+
+/// Starts the verification container and blocks until the database is accepting connections.
+pub fn block_until_database_is_ready(
+    docker_config: &DockerConfig,
+    container_id: &str,
+) -> ToolsetResult<()> {
+    dockurl::container::start_container(
+        &container_id,
+        &docker_config.client_docker_host,
+        docker_config.use_unix_socket,
+        Simple::new(),
+    )?;
+
+    wait_for_container_to_exit(
+        &container_id,
+        &docker_config.client_docker_host,
+        docker_config.use_unix_socket,
+        Simple::new(),
+    )?;
+
+    Ok(())
 }
 
 /// Polls until `container` is ready with either some `container_id` or `None`,

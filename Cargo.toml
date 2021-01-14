@@ -1,6 +1,6 @@
 [package]
 name = "tfb_toolset"
-version = "0.4.4"
+version = "0.5.0"
 authors = ["Mike Smith", "Nate Brady"]
 edition = "2018"
 
