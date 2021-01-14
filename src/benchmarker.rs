@@ -16,7 +16,7 @@ use crate::docker::{
     BenchmarkCommands, DockerContainerIdFuture, DockerOrchestration, Verification,
 };
 use crate::error::ToolsetError::{
-    AppServerContainerShutDownError, NoResponseFromDockerContainerError,
+    AppServerContainerShutDownError, DebugFailedException, NoResponseFromDockerContainerError,
     VerificationFailedException,
 };
 use crate::error::{ToolsetError, ToolsetResult};
@@ -229,7 +229,7 @@ impl<'a> Benchmarker<'a> {
                     Err(e) => {
                         logger.error(&e)?;
                         self.stop_containers();
-                        return Err(e);
+                        return Err(DebugFailedException);
                     }
                 }
             }
@@ -273,8 +273,6 @@ impl<'a> Benchmarker<'a> {
                                     verifications.push(verification);
                                 }
                                 Err(e) => {
-                                    // todo - remove this. Failing on CI - no idea why.
-                                    dbg!(&e);
                                     verifications.push(Verification {
                                         framework_name: project.framework.get_name(),
                                         test_name: test.get_name(),

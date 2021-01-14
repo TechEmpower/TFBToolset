@@ -42,6 +42,9 @@ pub enum ToolsetError {
     #[error("Unknown benchmarker mode: {0}")]
     UnknownBenchmarkerModeError(String),
 
+    #[error("Debug failed")]
+    DebugFailedException,
+
     #[error("Verification failed")]
     VerificationFailedException,
 

@@ -54,21 +54,21 @@ pub fn parse<'app>() -> App<'app> {
         .about("The toolset for the TechEmpower Framework Benchmarks.")
         // Suite options
         .arg(
-            Arg::with_name(args::AUDIT)
+            Arg::new(args::AUDIT)
                 .about("Audits framework tests for inconsistencies")
                 .takes_value(false)
                 .short('a')
                 .long("audit")
         )
         .arg(
-            Arg::with_name(args::CLEAN)
+            Arg::new(args::CLEAN)
                 .about("Removes the results directory")
                 .takes_value(false)
                 .short('c')
                 .long("clean")
         )
         .arg(
-            Arg::with_name(args::QUIET)
+            Arg::new(args::QUIET)
                 .about(
                     "Only print a limited set of messages to stdout, keep the bulk of messages in log files only",
                 )
@@ -77,7 +77,7 @@ pub fn parse<'app>() -> App<'app> {
                 .long("quiet")
         )
         .arg(
-            Arg::with_name(args::RESULTS_NAME)
+            Arg::new(args::RESULTS_NAME)
                 .about(
                     "Gives a name to this set of results, formatted as a date",
                 )
@@ -86,25 +86,25 @@ pub fn parse<'app>() -> App<'app> {
                 .default_value("(unspecified, datetime = %Y-%m-%d %H:%M:%S)")
         )
         .arg(
-            Arg::with_name(args::RESULTS_ENVIRONMENT)
+            Arg::new(args::RESULTS_ENVIRONMENT)
                 .about("Describes the environment in which these results were gathered")
                 .long("results-environment")
                 .takes_value(true)
                 .default_value("(unspecified, hostname = todo")
         )
         .arg(
-            Arg::with_name(args::RESULTS_UPLOAD_URI)
+            Arg::new(args::RESULTS_UPLOAD_URI)
                 .about("A URI where the in-progress results.json file will be POSTed periodically")
                 .long("results-upload-uri")
         )
         .arg(
-            Arg::with_name(args::PARSE_RESULTS)
+            Arg::new(args::PARSE_RESULTS)
                 .about("Parses the results of the given timestamp and merges that with the latest results")
                 .long("parse")
         )
         // Test options
         .arg(
-            Arg::with_name(args::TEST_NAMES)
+            Arg::new(args::TEST_NAMES)
                 .about("Name(s) of the test(s) to run")
                 .long("test")
                 .short('t')
@@ -112,7 +112,7 @@ pub fn parse<'app>() -> App<'app> {
                 .multiple(true)
         )
         .arg(
-            Arg::with_name(args::TEST_DIRS)
+            Arg::new(args::TEST_DIRS)
                 .about("Name(s) of framework director(y|ies) containing all tests to run")
                 .long("test-dir")
                 .short('d')
@@ -120,7 +120,7 @@ pub fn parse<'app>() -> App<'app> {
                 .multiple(true)
         )
         .arg(
-            Arg::with_name(args::TEST_LANGUAGES)
+            Arg::new(args::TEST_LANGUAGES)
                 .about("Name(s) of language director(y|ies) containing all tests to run")
                 .long("test-lang")
                 .short('l')
@@ -128,28 +128,28 @@ pub fn parse<'app>() -> App<'app> {
                 .multiple(true)
         )
         .arg(
-            Arg::with_name(args::TAGS)
+            Arg::new(args::TAGS)
                 .about("Tests to be run with the associated tag(s) name(s)")
                 .long("tag")
                 .takes_value(true)
                 .multiple(true)
         )
         .arg(
-            Arg::with_name(args::EXCLUDE)
+            Arg::new(args::EXCLUDE)
                 .about("Name(s) of test(s) to to exclude")
                 .long("exclude")
                 .takes_value(true)
                 .multiple(true)
         )
         .arg(
-            Arg::with_name(args::TYPES)
+            Arg::new(args::TYPES)
                 .about("Which type(s) of tests to run")
                 .long("type")
                 .takes_value(true)
                 .multiple(true)
         )
         .arg(
-            Arg::with_name(args::MODE)
+            Arg::new(args::MODE)
                 .about("Verify mode will only start up the tests, curl the urls and shutdown. \
                     Debug mode will skip verification and leave the server running.")
                 .long("mode")
@@ -158,72 +158,72 @@ pub fn parse<'app>() -> App<'app> {
                 .possible_values(&[modes::BENCHMARK, modes::VERIFY, modes::CICD, modes::DEBUG])
         )
         .arg(
-            Arg::with_name(args::LIST_FRAMEWORKS)
+            Arg::new(args::LIST_FRAMEWORKS)
                 .about("Lists all the known frameworks found in the current dir that can be run")
                 .long("list-frameworks")
         )
         .arg(
-            Arg::with_name(args::LIST_TESTS)
+            Arg::new(args::LIST_TESTS)
                 .about("Lists all the known tests found in the current dir that can be run")
                 .long("list-tests")
         )
         .arg(
-            Arg::with_name(args::LIST_TESTS_FOR_FRAMEWORK)
+            Arg::new(args::LIST_TESTS_FOR_FRAMEWORK)
                 .about("Lists all the tests for the given framework")
                 .long("framework-tests")
                 .takes_value(true)
         )
         .arg(
-            Arg::with_name(args::LIST_TESTS_WITH_TAG)
+            Arg::new(args::LIST_TESTS_WITH_TAG)
                 .about("Lists all the tests with the associated tag")
                 .long("list-tag")
                 .takes_value(true)
         )
         // Benchmark Options
         .arg(
-            Arg::with_name(args::DURATION)
+            Arg::new(args::DURATION)
                 .about("The duration in seconds for which each benchmark should be measured")
                 .long("duration")
                 .default_value("15")
         )
         .arg(
-            Arg::with_name(args::SERVER_DOCKER_HOST)
+            Arg::new(args::SERVER_DOCKER_HOST)
                 .about("Hostname/IP for the Server Docker daemon")
                 .long("server-docker-host")
                 .default_value(args::DOCKER_HOST_DEFAULT)
         )
         .arg(
-            Arg::with_name(args::DATABASE_DOCKER_HOST)
+            Arg::new(args::DATABASE_DOCKER_HOST)
                 .about("Hostname/IP for the Database Docker daemon")
                 .long("database-docker-host")
                 .default_value(args::DOCKER_HOST_DEFAULT)
         )
         .arg(
-            Arg::with_name(args::CLIENT_DOCKER_HOST)
+            Arg::new(args::CLIENT_DOCKER_HOST)
                 .about("Hostname/IP for the Client Docker daemon")
                 .long("client-docker-host")
                 .default_value(args::DOCKER_HOST_DEFAULT)
         )
         .arg(
-            Arg::with_name(args::SERVER_HOST)
+            Arg::new(args::SERVER_HOST)
                 .about("Hostname/IP for the application server")
                 .long("server-host")
                 .default_value(args::SERVER_HOST_DEFAULT)
         )
         .arg(
-            Arg::with_name(args::DATABASE_HOST)
+            Arg::new(args::DATABASE_HOST)
                 .about("Hostname/IP for the database server")
                 .long("database-host")
                 .default_value(args::DATABASE_HOST_DEFAULT)
         )
         .arg(
-            Arg::with_name(args::CLIENT_HOST)
+            Arg::new(args::CLIENT_HOST)
                 .about("Hostname/IP for the client server")
                 .long("client-host")
                 .default_value(args::CLIENT_HOST_DEFAULT)
         )
         .arg(
-            Arg::with_name(args::CONCURRENCY_LEVELS)
+            Arg::new(args::CONCURRENCY_LEVELS)
                 .about("List of concurrencies to benchmark")
                 .long("concurrency-levels")
                 .takes_value(true)
@@ -231,7 +231,7 @@ pub fn parse<'app>() -> App<'app> {
                 .default_values(&["16", "32", "64", "128", "256", "512"])
         )
         .arg(
-            Arg::with_name(args::PIPELINE_CONCURRENCY_LEVELS)
+            Arg::new(args::PIPELINE_CONCURRENCY_LEVELS)
                 .about("List of pipeline concurrencies to benchmark")
                 .long("pipeline-concurrency-levels")
                 .takes_value(true)
@@ -239,7 +239,7 @@ pub fn parse<'app>() -> App<'app> {
                 .default_values(&["256", "1024", "4096", "16384"])
         )
         .arg(
-            Arg::with_name(args::QUERY_LEVELS)
+            Arg::new(args::QUERY_LEVELS)
                 .about("List of query levels to benchmark")
                 .long("query-levels")
                 .takes_value(true)
@@ -247,7 +247,7 @@ pub fn parse<'app>() -> App<'app> {
                 .default_values(&["1", "5", "10", "15", "20"])
         )
         .arg(
-            Arg::with_name(args::CACHED_QUERY_LEVELS)
+            Arg::new(args::CACHED_QUERY_LEVELS)
                 .about("List of cached query levels to benchmark")
                 .long("cached-query-levels")
                 .takes_value(true)
@@ -256,7 +256,7 @@ pub fn parse<'app>() -> App<'app> {
         )
         // Network options
         .arg(
-            Arg::with_name(args::NETWORK_MODE)
+            Arg::new(args::NETWORK_MODE)
                 .about("The network mode with which Docker should be run")
                 .long("network-mode")
                 .takes_value(true)

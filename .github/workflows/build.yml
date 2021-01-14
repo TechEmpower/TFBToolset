@@ -7,6 +7,7 @@ on:
 env:
   TFB_HOME: ./test
   RUST_BACKTRACE: full
+  CLICOLOR_FORCE: 1
 jobs:
   build:
     strategy:
