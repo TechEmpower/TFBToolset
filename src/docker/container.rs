@@ -21,7 +21,7 @@ use dockurl::container::create::networking_config::{
 };
 use dockurl::container::create::options::Options;
 use dockurl::container::{
-    attach_to_container, get_container_logs, inspect_container, kill_container,
+    attach_to_container, delete_container, get_container_logs, inspect_container, kill_container,
     wait_for_container_to_exit,
 };
 use dockurl::network::NetworkMode;
@@ -370,6 +370,18 @@ pub fn start_benchmark_command_retrieval_container(
         docker_config.use_unix_socket,
         BenchmarkCommandListener::new(test_type, logger),
     )?;
+
+    if docker_config.remove_containers {
+        delete_container(
+            &container_id,
+            &docker_config.client_docker_host,
+            docker_config.use_unix_socket,
+            Simple::new(),
+            true,
+            true,
+            false,
+        )?;
+    }
     if let Some(commands) = listener.benchmark_commands {
         Ok(commands)
     } else {
@@ -401,6 +413,18 @@ pub fn start_benchmarker_container(
         docker_config.use_unix_socket,
         Benchmarker::new(logger),
     )?;
+
+    if docker_config.remove_containers {
+        delete_container(
+            &container_id,
+            &docker_config.client_docker_host,
+            docker_config.use_unix_socket,
+            Simple::new(),
+            true,
+            true,
+            false,
+        )?;
+    }
 
     benchmarker.parse_wrk_output()
 }
@@ -436,6 +460,18 @@ pub fn start_verification_container(
         Verifier::new(project, test, test_type, logger),
     )?;
 
+    if docker_config.remove_containers {
+        delete_container(
+            &container_id,
+            &docker_config.client_docker_host,
+            docker_config.use_unix_socket,
+            Simple::new(),
+            true,
+            true,
+            false,
+        )?;
+    }
+
     Ok(verification.verification)
 }
 
@@ -445,18 +481,30 @@ pub fn block_until_database_is_ready(
     container_id: &str,
 ) -> ToolsetResult<()> {
     dockurl::container::start_container(
-        &container_id,
+        container_id,
         &docker_config.client_docker_host,
         docker_config.use_unix_socket,
         Simple::new(),
     )?;
 
     wait_for_container_to_exit(
-        &container_id,
+        container_id,
         &docker_config.client_docker_host,
         docker_config.use_unix_socket,
         Simple::new(),
     )?;
+
+    if docker_config.remove_containers {
+        delete_container(
+            container_id,
+            &docker_config.client_docker_host,
+            docker_config.use_unix_socket,
+            Simple::new(),
+            true,
+            true,
+            false,
+        )?;
+    }
 
     Ok(())
 }
@@ -468,23 +516,24 @@ pub fn block_until_database_is_ready(
 /// Note: this function blocks until the given `container` is in a ready state.
 pub fn stop_docker_container_future(
     use_unix_socket: bool,
-    container: &Arc<Mutex<DockerContainerIdFuture>>,
+    remove_containers: bool,
+    container_id: &Arc<Mutex<DockerContainerIdFuture>>,
 ) {
     let mut requires_wait_to_stop = false;
-    if let Ok(container) = container.lock() {
+    if let Ok(container) = container_id.lock() {
         requires_wait_to_stop = container.requires_wait_to_stop;
     }
     if requires_wait_to_stop {
         let mut poll = Poll::Pending;
         while poll == Poll::Pending {
-            if let Ok(container) = container.lock() {
+            if let Ok(container) = container_id.lock() {
                 poll = container.poll();
                 if poll == Poll::Pending {
                     thread::sleep(Duration::from_secs(1));
                 }
             }
         }
-        if let Ok(mut container) = container.lock() {
+        if let Ok(mut container) = container_id.lock() {
             if let Some(container_id) = &container.container_id {
                 kill_container(
                     container_id,
@@ -493,6 +542,20 @@ pub fn stop_docker_container_future(
                     Simple::new(),
                 )
                 .unwrap_or(());
+
+                if remove_containers {
+                    delete_container(
+                        container_id,
+                        &container.docker_host,
+                        use_unix_socket,
+                        Simple::new(),
+                        true,
+                        true,
+                        false,
+                    )
+                    .unwrap_or(());
+                }
+
                 container.unregister();
             }
         }

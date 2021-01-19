@@ -95,6 +95,7 @@ impl<'a> Benchmarker<'a> {
 
         if mode != CICD {
             let use_unix_socket = benchmarker.docker_config.use_unix_socket;
+            let remove_containers = benchmarker.docker_config.remove_containers;
             let application_container_id = Arc::clone(&benchmarker.application_container_id);
             let database_container_id = Arc::clone(&benchmarker.database_container_id);
             let verifier_container_id = Arc::clone(&benchmarker.verifier_container_id);
@@ -116,10 +117,26 @@ impl<'a> Benchmarker<'a> {
                     let ctrlc_received = Arc::clone(&ctrlc_received);
                     thread::spawn(move || {
                         ctrlc_received.store(true, Ordering::Release);
-                        stop_docker_container_future(use_unix_socket, &verifier_container_id);
-                        stop_docker_container_future(use_unix_socket, &benchmarker_container_id);
-                        stop_docker_container_future(use_unix_socket, &application_container_id);
-                        stop_docker_container_future(use_unix_socket, &database_container_id);
+                        stop_docker_container_future(
+                            use_unix_socket,
+                            remove_containers,
+                            &verifier_container_id,
+                        );
+                        stop_docker_container_future(
+                            use_unix_socket,
+                            remove_containers,
+                            &benchmarker_container_id,
+                        );
+                        stop_docker_container_future(
+                            use_unix_socket,
+                            remove_containers,
+                            &application_container_id,
+                        );
+                        stop_docker_container_future(
+                            use_unix_socket,
+                            remove_containers,
+                            &database_container_id,
+                        );
                         std::process::exit(0);
                     });
                 }
@@ -664,18 +681,22 @@ impl<'a> Benchmarker<'a> {
     fn stop_containers(&mut self) {
         stop_docker_container_future(
             self.docker_config.use_unix_socket,
+            self.docker_config.remove_containers,
             &self.verifier_container_id,
         );
         stop_docker_container_future(
             self.docker_config.use_unix_socket,
+            self.docker_config.remove_containers,
             &self.benchmarker_container_id,
         );
         stop_docker_container_future(
             self.docker_config.use_unix_socket,
+            self.docker_config.remove_containers,
             &self.application_container_id,
         );
         stop_docker_container_future(
             self.docker_config.use_unix_socket,
+            self.docker_config.remove_containers,
             &self.database_container_id,
         );
     }

@@ -215,8 +215,6 @@ dependencies = [
 [[package]]
 name = "dockurl"
 version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b655b7368a55af072581216d8d2a15bf262ebe124d367ab0fa5a9ce139f04eb7"
 dependencies = [
  "curl",
  "serde",

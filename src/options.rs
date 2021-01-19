@@ -37,6 +37,7 @@ pub mod args {
     pub const QUERY_LEVELS: &str = "Query Levels";
     pub const CACHED_QUERY_LEVELS: &str = "Cached Query Levels";
     pub const NETWORK_MODE: &str = "Network Mode";
+    pub const REMOVE_CONTAINERS: &str = "Remove Containers";
 }
 
 pub mod network_modes {
@@ -101,6 +102,11 @@ pub fn parse<'app>() -> App<'app> {
             Arg::new(args::PARSE_RESULTS)
                 .about("Parses the results of the given timestamp and merges that with the latest results")
                 .long("parse")
+        )
+        .arg(
+            Arg::new(args::REMOVE_CONTAINERS)
+                .about("Automatically remove containers after they have exited")
+                .long("rm")
         )
         // Test options
         .arg(
