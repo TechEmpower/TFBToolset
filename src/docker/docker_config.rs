@@ -1,3 +1,4 @@
+use crate::benchmarker::modes;
 use crate::docker::network::{get_network_id, get_tfb_network_id};
 use crate::io::{create_results_dir, Logger};
 use crate::options;
@@ -86,7 +87,11 @@ impl<'a> DockerConfig<'a> {
             server_host == options::args::SERVER_HOST_DEFAULT
         };
 
-        let logger = Logger::in_dir(&create_results_dir().unwrap());
+        let logger = match matches.value_of(options::args::MODE).unwrap() {
+            // We don't want to log to disk in CICD.
+            modes::CICD => Logger::default(),
+            &_ => Logger::in_dir(&create_results_dir().unwrap()),
+        };
 
         // There is a chance this is a hack, but it seems that these two
         // networks are always available out of the box for Docker.
