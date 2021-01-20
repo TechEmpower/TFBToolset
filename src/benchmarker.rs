@@ -24,7 +24,7 @@ use crate::io::{report_verifications, Logger};
 use crate::results::{BenchmarkData, Results};
 use colored::Colorize;
 use curl::easy::Easy2;
-use dockurl::container::{inspect_container, stop_container};
+use dockurl::container::inspect_container;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -331,6 +331,7 @@ impl<'a> Benchmarker<'a> {
         }
 
         self.trip();
+        self.stop_containers();
         report_verifications(verifications, logger)?;
 
         if succeeded {
@@ -803,21 +804,7 @@ impl<'a> Benchmarker<'a> {
             self.trip();
             if slept_for > 60 {
                 self.trip();
-                stop_container(
-                    &container_ids.0,
-                    &self.docker_config.server_docker_host,
-                    self.docker_config.use_unix_socket,
-                    Simple::new(),
-                )?;
-                if let Some(database_container_id) = &container_ids.1 {
-                    self.trip();
-                    stop_container(
-                        database_container_id,
-                        &self.docker_config.database_docker_host,
-                        self.docker_config.use_unix_socket,
-                        Simple::new(),
-                    )?;
-                }
+                self.stop_containers();
 
                 return Err(NoResponseFromDockerContainerError);
             }

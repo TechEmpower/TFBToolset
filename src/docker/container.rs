@@ -24,7 +24,7 @@ use dockurl::container::{
     attach_to_container, delete_container, get_container_logs, inspect_container, kill_container,
     wait_for_container_to_exit,
 };
-use dockurl::image::delete_image;
+use dockurl::image::{delete_image, delete_unused_images};
 use dockurl::network::NetworkMode;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -542,7 +542,7 @@ pub fn stop_docker_container_future(
                     use_unix_socket,
                     Simple::new(),
                 )
-                .unwrap_or(());
+                .unwrap();
 
                 if docker_clean_up {
                     delete_container(
@@ -554,7 +554,7 @@ pub fn stop_docker_container_future(
                         true,
                         false,
                     )
-                    .unwrap_or(());
+                    .unwrap();
                 }
 
                 container.unregister();
@@ -565,6 +565,15 @@ pub fn stop_docker_container_future(
                         image_id,
                         true,
                         false,
+                        &container.docker_host,
+                        use_unix_socket,
+                        Simple::new(),
+                    )
+                    .unwrap();
+
+                    // Todo - this is jank... do this better.
+                    delete_unused_images(
+                        "{\"dangling\":[\"true\"]}",
                         &container.docker_host,
                         use_unix_socket,
                         Simple::new(),
