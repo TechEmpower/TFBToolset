@@ -95,7 +95,7 @@ impl<'a> Benchmarker<'a> {
 
         if mode != CICD {
             let use_unix_socket = benchmarker.docker_config.use_unix_socket;
-            let remove_containers = benchmarker.docker_config.remove_containers;
+            let docker_cleanup = benchmarker.docker_config.clean_up;
             let application_container_id = Arc::clone(&benchmarker.application_container_id);
             let database_container_id = Arc::clone(&benchmarker.database_container_id);
             let verifier_container_id = Arc::clone(&benchmarker.verifier_container_id);
@@ -119,22 +119,22 @@ impl<'a> Benchmarker<'a> {
                         ctrlc_received.store(true, Ordering::Release);
                         stop_docker_container_future(
                             use_unix_socket,
-                            remove_containers,
+                            docker_cleanup,
                             &verifier_container_id,
                         );
                         stop_docker_container_future(
                             use_unix_socket,
-                            remove_containers,
+                            docker_cleanup,
                             &benchmarker_container_id,
                         );
                         stop_docker_container_future(
                             use_unix_socket,
-                            remove_containers,
+                            docker_cleanup,
                             &application_container_id,
                         );
                         stop_docker_container_future(
                             use_unix_socket,
-                            remove_containers,
+                            docker_cleanup,
                             &database_container_id,
                         );
                         std::process::exit(0);
@@ -608,6 +608,10 @@ impl<'a> Benchmarker<'a> {
 
         let image_id = build_image(&self.docker_config, project, test, logger)?;
 
+        if let Ok(mut application_container_id) = self.application_container_id.lock() {
+            application_container_id.image_id(&image_id);
+        }
+
         let container_id = create_container(
             &self.docker_config,
             &image_id,
@@ -681,22 +685,22 @@ impl<'a> Benchmarker<'a> {
     fn stop_containers(&mut self) {
         stop_docker_container_future(
             self.docker_config.use_unix_socket,
-            self.docker_config.remove_containers,
+            self.docker_config.clean_up,
             &self.verifier_container_id,
         );
         stop_docker_container_future(
             self.docker_config.use_unix_socket,
-            self.docker_config.remove_containers,
+            self.docker_config.clean_up,
             &self.benchmarker_container_id,
         );
         stop_docker_container_future(
             self.docker_config.use_unix_socket,
-            self.docker_config.remove_containers,
+            self.docker_config.clean_up,
             &self.application_container_id,
         );
         stop_docker_container_future(
             self.docker_config.use_unix_socket,
-            self.docker_config.remove_containers,
+            self.docker_config.clean_up,
             &self.database_container_id,
         );
     }

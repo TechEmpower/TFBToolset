@@ -37,7 +37,7 @@ pub mod args {
     pub const QUERY_LEVELS: &str = "Query Levels";
     pub const CACHED_QUERY_LEVELS: &str = "Cached Query Levels";
     pub const NETWORK_MODE: &str = "Network Mode";
-    pub const REMOVE_CONTAINERS: &str = "Remove Containers";
+    pub const DOCKER_CLEANUP: &str = "Auto-Clean Docker Containers and Images";
 }
 
 pub mod network_modes {
@@ -104,8 +104,8 @@ pub fn parse<'app>() -> App<'app> {
                 .long("parse")
         )
         .arg(
-            Arg::new(args::REMOVE_CONTAINERS)
-                .about("Automatically remove containers after they have exited")
+            Arg::new(args::DOCKER_CLEANUP)
+                .about("Automatically remove containers and images after they have exited")
                 .long("rm")
         )
         // Test options

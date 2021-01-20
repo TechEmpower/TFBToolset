@@ -26,7 +26,7 @@ pub struct DockerConfig<'a> {
     pub results_environment: &'a str,
     pub results_upload_uri: Option<&'a str>,
     pub logger: Logger,
-    pub remove_containers: bool,
+    pub clean_up: bool,
 }
 impl<'a> DockerConfig<'a> {
     pub fn new(matches: &'a clap::ArgMatches) -> Self {
@@ -119,7 +119,7 @@ impl<'a> DockerConfig<'a> {
             None => None,
             Some(str) => Some(str),
         };
-        let remove_containers = matches.is_present(options::args::REMOVE_CONTAINERS);
+        let clean_up = matches.is_present(options::args::DOCKER_CLEANUP);
 
         Self {
             use_unix_socket,
@@ -142,7 +142,7 @@ impl<'a> DockerConfig<'a> {
             results_name,
             results_environment,
             results_upload_uri,
-            remove_containers,
+            clean_up,
         }
     }
 }

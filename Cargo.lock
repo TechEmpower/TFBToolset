@@ -214,9 +214,9 @@ dependencies = [
 
 [[package]]
 name = "dockurl"
-version = "0.1.3"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18e5035440dc38b3a71e2c66a04f1ab4e03f675b079366be80d8c11c9183d54b"
+checksum = "45d8c5606dc9a964cb1d6512c0d6a8e9cbbf54451aa3707f5485473c97dccaf9"
 dependencies = [
  "curl",
  "serde",
@@ -662,7 +662,7 @@ dependencies = [
 
 [[package]]
 name = "tfb_toolset"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "chrono",
  "clap",

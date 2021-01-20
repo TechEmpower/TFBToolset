@@ -24,6 +24,7 @@ use dockurl::container::{
     attach_to_container, delete_container, get_container_logs, inspect_container, kill_container,
     wait_for_container_to_exit,
 };
+use dockurl::image::delete_image;
 use dockurl::network::NetworkMode;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -371,7 +372,7 @@ pub fn start_benchmark_command_retrieval_container(
         BenchmarkCommandListener::new(test_type, logger),
     )?;
 
-    if docker_config.remove_containers {
+    if docker_config.clean_up {
         delete_container(
             &container_id,
             &docker_config.client_docker_host,
@@ -414,7 +415,7 @@ pub fn start_benchmarker_container(
         Benchmarker::new(logger),
     )?;
 
-    if docker_config.remove_containers {
+    if docker_config.clean_up {
         delete_container(
             &container_id,
             &docker_config.client_docker_host,
@@ -460,7 +461,7 @@ pub fn start_verification_container(
         Verifier::new(project, test, test_type, logger),
     )?;
 
-    if docker_config.remove_containers {
+    if docker_config.clean_up {
         delete_container(
             &container_id,
             &docker_config.client_docker_host,
@@ -494,7 +495,7 @@ pub fn block_until_database_is_ready(
         Simple::new(),
     )?;
 
-    if docker_config.remove_containers {
+    if docker_config.clean_up {
         delete_container(
             container_id,
             &docker_config.client_docker_host,
@@ -516,7 +517,7 @@ pub fn block_until_database_is_ready(
 /// Note: this function blocks until the given `container` is in a ready state.
 pub fn stop_docker_container_future(
     use_unix_socket: bool,
-    remove_containers: bool,
+    docker_clean_up: bool,
     container_id: &Arc<Mutex<DockerContainerIdFuture>>,
 ) {
     let mut requires_wait_to_stop = false;
@@ -543,7 +544,7 @@ pub fn stop_docker_container_future(
                 )
                 .unwrap_or(());
 
-                if remove_containers {
+                if docker_clean_up {
                     delete_container(
                         container_id,
                         &container.docker_host,
@@ -558,6 +559,20 @@ pub fn stop_docker_container_future(
 
                 container.unregister();
             }
+            if let Some(image_id) = &container.image_id {
+                if docker_clean_up {
+                    delete_image(
+                        image_id,
+                        true,
+                        false,
+                        &container.docker_host,
+                        use_unix_socket,
+                        Simple::new(),
+                    )
+                    .unwrap();
+                }
+            }
+            container.image_id = None;
         }
     }
 }

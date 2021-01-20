@@ -44,6 +44,7 @@ pub struct BenchmarkCommands {
 pub struct DockerContainerIdFuture {
     requires_wait_to_stop: bool,
     container_id: Option<String>,
+    image_id: Option<String>,
     docker_host: String,
 }
 impl DockerContainerIdFuture {
@@ -51,8 +52,13 @@ impl DockerContainerIdFuture {
         DockerContainerIdFuture {
             requires_wait_to_stop: false,
             container_id: None,
+            image_id: None,
             docker_host: docker_host.to_string(),
         }
+    }
+
+    pub fn image_id(&mut self, image_id: &str) {
+        self.image_id = Some(image_id.to_string());
     }
 
     pub fn register(&mut self, container_id: &str) {
