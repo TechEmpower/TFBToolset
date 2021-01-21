@@ -1,5 +1,5 @@
 use crate::benchmarker::Mode;
-use crate::config::{Project, Test};
+use crate::config::{Named, Project, Test};
 use crate::docker::docker_config::DockerConfig;
 use crate::docker::listener::application::Application;
 use crate::docker::listener::benchmark_command_listener::BenchmarkCommandListener;
@@ -440,6 +440,14 @@ pub fn start_verification_container(
     container_id: &str,
     logger: &Logger,
 ) -> ToolsetResult<Verification> {
+    let mut to_ret = Verification {
+        framework_name: project.framework.get_name(),
+        test_name: test.get_name(),
+        type_name: test_type.0.clone(),
+        warnings: vec![],
+        errors: vec![],
+    };
+    let verification = Arc::new(Mutex::new(to_ret.clone()));
     dockurl::container::start_container(
         &container_id,
         &docker_config.client_docker_host,
@@ -447,18 +455,27 @@ pub fn start_verification_container(
         Simple::new(),
     )?;
 
-    wait_for_container_to_exit(
-        container_id,
-        &docker_config.client_docker_host,
-        docker_config.use_unix_socket,
-        Simple::new(),
-    )?;
+    let verifier_container_id = container_id.to_string();
+    let config = docker_config.clone();
+    let client_docker_host = config.client_docker_host.clone();
+    let use_unix_socket = docker_config.use_unix_socket;
+    let verifier_logger = logger.clone();
+    let mut inner_verification = Arc::clone(&verification);
+    thread::spawn(move || {
+        dockurl::container::attach_to_container(
+            &verifier_container_id,
+            &client_docker_host,
+            use_unix_socket,
+            Verifier::new(Arc::clone(&mut inner_verification), &verifier_logger),
+        )
+        .unwrap();
+    });
 
-    let verification = get_container_logs(
+    wait_for_container_to_exit(
         &container_id,
         &docker_config.client_docker_host,
         docker_config.use_unix_socket,
-        Verifier::new(project, test, test_type, logger),
+        Simple::new(),
     )?;
 
     if docker_config.clean_up {
@@ -473,7 +490,11 @@ pub fn start_verification_container(
         )?;
     }
 
-    Ok(verification.verification)
+    if let Ok(verification) = verification.lock() {
+        to_ret = verification.clone();
+    }
+
+    Ok(to_ret)
 }
 
 /// Starts the verification container and blocks until the database is accepting connections.
@@ -542,7 +563,10 @@ pub fn stop_docker_container_future(
                     use_unix_socket,
                     Simple::new(),
                 )
-                .unwrap();
+                .unwrap_or(());
+                // ↑ specifically succeeds even if there is an error
+                // For instance, if an application container stops running because the application
+                // crashed, we want to call this and continue.
 
                 if docker_clean_up {
                     delete_container(
@@ -554,7 +578,7 @@ pub fn stop_docker_container_future(
                         true,
                         false,
                     )
-                    .unwrap();
+                    .unwrap_or(());
                 }
 
                 container.unregister();
@@ -569,7 +593,7 @@ pub fn stop_docker_container_future(
                         use_unix_socket,
                         Simple::new(),
                     )
-                    .unwrap();
+                    .unwrap_or(None);
 
                     // Todo - this is jank... do this better.
                     delete_unused_images(
@@ -578,7 +602,7 @@ pub fn stop_docker_container_future(
                         use_unix_socket,
                         Simple::new(),
                     )
-                    .unwrap();
+                    .unwrap_or(());
                 }
             }
             container.image_id = None;

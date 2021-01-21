@@ -1,33 +1,23 @@
-use crate::config::{Named, Project, Test};
+// use crate::config::{Named, Project, Test};
 use crate::docker::Verification;
 use crate::io::Logger;
 use curl::easy::{Handler, WriteError};
 use serde::Deserialize;
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug)]
 pub struct Verifier {
-    pub verification: Verification,
+    pub verification: Arc<Mutex<Verification>>,
     logger: Logger,
 }
 impl Verifier {
-    pub fn new(
-        project: &Project,
-        test: &Test,
-        test_type: &(&String, &String),
-        logger: &Logger,
-    ) -> Self {
+    pub fn new(verification: Arc<Mutex<Verification>>, logger: &Logger) -> Self {
         let mut logger = logger.clone();
         logger.set_log_file("verifications.txt");
 
         Self {
             logger,
-            verification: Verification {
-                framework_name: project.framework.get_name(),
-                test_name: test.get_name(),
-                type_name: test_type.0.clone(),
-                warnings: vec![],
-                errors: vec![],
-            },
+            verification,
         }
     }
 }
@@ -37,9 +27,13 @@ impl Handler for Verifier {
             for line in logs.lines() {
                 if !line.trim().is_empty() {
                     if let Ok(warning) = serde_json::from_str::<WarningMessage>(line) {
-                        self.verification.warnings.push(warning.warning);
+                        if let Ok(mut verification) = self.verification.lock() {
+                            verification.warnings.push(warning.warning);
+                        }
                     } else if let Ok(error) = serde_json::from_str::<ErrorMessage>(line) {
-                        self.verification.errors.push(error.error);
+                        if let Ok(mut verification) = self.verification.lock() {
+                            verification.errors.push(error.error);
+                        }
                     } else {
                         self.logger.log(line.trim_end()).unwrap();
                     }
