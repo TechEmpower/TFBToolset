@@ -324,25 +324,19 @@ pub fn start_container(
     docker_host: &str,
     logger: &Logger,
 ) -> ToolsetResult<()> {
+    let cid = container_id.to_string();
+    let host = docker_host.to_string();
+    let use_unix_socket = docker_config.use_unix_socket;
+    let logger = logger.clone();
+    thread::spawn(move || {
+        attach_to_container(&cid, &host, use_unix_socket, Application::new(&logger)).unwrap();
+    });
     dockurl::container::start_container(
         container_id,
         docker_host,
         docker_config.use_unix_socket,
         Simple::new(),
     )?;
-    let container_id = container_id.to_string();
-    let docker_host = docker_config.client_docker_host.clone();
-    let use_unix_socket = docker_config.use_unix_socket;
-    let logger = logger.clone();
-    thread::spawn(move || {
-        attach_to_container(
-            &container_id,
-            &docker_host,
-            use_unix_socket,
-            Application::new(&logger),
-        )
-        .unwrap();
-    });
     Ok(())
 }
 
@@ -448,28 +442,39 @@ pub fn start_verification_container(
         errors: vec![],
     };
     let verification = Arc::new(Mutex::new(to_ret.clone()));
+
+    let verifier_container_id = container_id.to_string();
+    let config = docker_config.clone();
+    let client_docker_host = config.client_docker_host;
+    let use_unix_socket = docker_config.use_unix_socket;
+    let verifier_logger = logger.clone();
+    let inner_verification = Arc::clone(&verification);
+    // This function is extremely complicated and seemingly in the wrong order, but it is very
+    // convoluted and intended. We attach to the container *before* it is started in a new thread,
+    // and, using an Arc, communicate stderr/stdout and messages from the container (when it runs)
+    // to the main thread.
+    // `attach_to_container` blocks and therefore must be in a separate thread.
+    // If we did `attach` *after* `start_container`, then there is an **INTENDED** implementation
+    // in Docker to **NOT** close the connection, so this would block indefinitely.
+    // It is safe to trust this implementation in the thread because we `attach` **BEFORE** the
+    // container is started, and therefore it *will* exit after we are `attached` which will close
+    // the connection.
+    thread::spawn(move || {
+        dockurl::container::attach_to_container(
+            &verifier_container_id,
+            &client_docker_host,
+            use_unix_socket,
+            Verifier::new(Arc::clone(&inner_verification), &verifier_logger),
+        )
+        .unwrap();
+    });
+
     dockurl::container::start_container(
         &container_id,
         &docker_config.client_docker_host,
         docker_config.use_unix_socket,
         Simple::new(),
     )?;
-
-    let verifier_container_id = container_id.to_string();
-    let config = docker_config.clone();
-    let client_docker_host = config.client_docker_host.clone();
-    let use_unix_socket = docker_config.use_unix_socket;
-    let verifier_logger = logger.clone();
-    let mut inner_verification = Arc::clone(&verification);
-    thread::spawn(move || {
-        dockurl::container::attach_to_container(
-            &verifier_container_id,
-            &client_docker_host,
-            use_unix_socket,
-            Verifier::new(Arc::clone(&mut inner_verification), &verifier_logger),
-        )
-        .unwrap();
-    });
 
     wait_for_container_to_exit(
         &container_id,
