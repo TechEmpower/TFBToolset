@@ -141,7 +141,7 @@ impl<'a> Benchmarker<'a> {
                     });
                 }
             })
-            .unwrap();
+                .unwrap();
         }
 
         benchmarker
@@ -260,79 +260,83 @@ impl<'a> Benchmarker<'a> {
     pub fn verify(&mut self) -> ToolsetResult<()> {
         let mut succeeded = true;
         let mut verifications = Vec::new();
-        let logger = self.docker_config.logger.clone();
-        logger.log("Pulling verifier; this may take some time.")?;
-        // todo - how should we version this?
-        pull_image(
-            &self.docker_config,
-            &self.docker_config.client_docker_host,
-            "techempower/tfb.verifier",
-        )?;
         let projects = &self.projects.clone();
-        for project in projects {
-            for test in &project.tests {
-                let mut logger = logger.clone();
-                logger.set_test(test);
-                self.trip();
-                match self.start_test_orchestration(project, test, &logger) {
-                    Ok(orchestration) => {
-                        for test_type in &test.urls {
-                            self.trip();
-                            match self.run_verification(
-                                &project,
-                                &test,
-                                &orchestration,
-                                &test_type,
-                                &logger,
-                            ) {
-                                Ok(verification) => {
-                                    succeeded &= verification.errors.is_empty();
-                                    verifications.push(verification);
-                                }
-                                Err(e) => {
-                                    verifications.push(Verification {
-                                        framework_name: project.framework.get_name(),
-                                        test_name: test.get_name(),
-                                        type_name: String::default(),
-                                        warnings: Vec::default(),
-                                        errors: vec![Error {
-                                            message: format!("{:?}", e),
-                                            short_message: "Failed to Verify".to_string(),
-                                        }],
-                                    });
-                                    succeeded = false;
-                                    self.trip();
-                                    self.stop_containers();
+        if projects.is_empty() {
+            succeeded = false;
+        } else {
+            let logger = self.docker_config.logger.clone();
+            logger.log("Pulling verifier; this may take some time.")?;
+            // todo - how should we version this?
+            pull_image(
+                &self.docker_config,
+                &self.docker_config.client_docker_host,
+                "techempower/tfb.verifier",
+            )?;
+            for project in projects {
+                for test in &project.tests {
+                    let mut logger = logger.clone();
+                    logger.set_test(test);
+                    self.trip();
+                    match self.start_test_orchestration(project, test, &logger) {
+                        Ok(orchestration) => {
+                            for test_type in &test.urls {
+                                self.trip();
+                                match self.run_verification(
+                                    &project,
+                                    &test,
+                                    &orchestration,
+                                    &test_type,
+                                    &logger,
+                                ) {
+                                    Ok(verification) => {
+                                        succeeded &= verification.errors.is_empty();
+                                        verifications.push(verification);
+                                    }
+                                    Err(e) => {
+                                        verifications.push(Verification {
+                                            framework_name: project.framework.get_name(),
+                                            test_name: test.get_name(),
+                                            type_name: String::default(),
+                                            warnings: Vec::default(),
+                                            errors: vec![Error {
+                                                message: format!("{:?}", e),
+                                                short_message: "Failed to Verify".to_string(),
+                                            }],
+                                        });
+                                        succeeded = false;
+                                        self.trip();
+                                        self.stop_containers();
+                                    }
                                 }
                             }
                         }
-                    }
-                    Err(e) => {
-                        logger.error(&e)?;
-                        verifications.push(Verification {
-                            framework_name: project.framework.get_name(),
-                            test_name: test.get_name(),
-                            type_name: String::default(),
-                            warnings: Vec::default(),
-                            errors: vec![Error {
-                                message: format!("{:?}", e),
-                                short_message: "Failed to Start".to_string(),
-                            }],
-                        });
-                        succeeded = false;
-                        self.trip();
-                        self.stop_containers();
-                    }
-                };
+                        Err(e) => {
+                            logger.error(&e)?;
+                            verifications.push(Verification {
+                                framework_name: project.framework.get_name(),
+                                test_name: test.get_name(),
+                                type_name: String::default(),
+                                warnings: Vec::default(),
+                                errors: vec![Error {
+                                    message: format!("{:?}", e),
+                                    short_message: "Failed to Start".to_string(),
+                                }],
+                            });
+                            succeeded = false;
+                            self.trip();
+                            self.stop_containers();
+                        }
+                    };
 
-                self.trip();
-                self.stop_containers();
+                    self.trip();
+                    self.stop_containers();
+                }
             }
-        }
 
-        self.trip();
-        self.stop_containers();
-        report_verifications(verifications, logger)?;
+            self.trip();
+            self.stop_containers();
+            report_verifications(verifications, logger)?;
+        }
 
         if succeeded {
             Ok(())

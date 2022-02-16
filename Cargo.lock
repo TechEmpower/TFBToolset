@@ -664,7 +664,7 @@ dependencies = [
 
 [[package]]
 name = "tfb_toolset"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "chrono",
  "clap",
