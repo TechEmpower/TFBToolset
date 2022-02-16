@@ -27,6 +27,15 @@ local machine for development and testing purposes.
 
 * [Expose daemon on `tcp://localhost:2375`](https://docs.docker.com/docker-for-windows/#general)
 
+### EnvVars
+
+To run any tests, the toolset needs to know the location of `FrameworkBenchmarks`.
+There are three places the toolset searches (in order):
+
+* Environment variable `TFB_HOME`
+* Home directory; e.g. `~/.tfb`
+* Current directory
+
 ### Running the tests
 
 ```
@@ -45,13 +54,6 @@ The executable `tfb_toolset` (`tfb_toolset.exe` on Windows) only needs to be on
 the `PATH`.
 
 ## Running
-
-To run any tests, the toolset needs to know the location of `FrameworkBenchmarks`.
-There are three places the toolset searches (in order):
-
-* Environment variable `TFB_HOME`
-* Home directory; e.g. `~/.tfb`
-* Current directory
 
 #### Verify Example
 
